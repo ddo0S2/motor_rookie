@@ -1,47 +1,33 @@
 package com.hyundai.motor_rookie
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
-import com.hyundai.motor_rookie.ui.theme.Motor_rookieTheme
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import com.hyundai.motor_rookie.ui.PowerNapApp
 
 class MainActivity : ComponentActivity() {
+
+    private val micPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* 거부 시 퀴즈는 터치 보기로만 답할 수 있습니다 */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-        setContent {
-            Motor_rookieTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Greeting(
-                        name = "Android",
-                        modifier = Modifier.padding(innerPadding)
-                    )
-                }
-            }
+
+        // 파워냅 중 화면이 꺼져 타이머 표시가 멈추지 않도록 합니다.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            micPermission.launch(Manifest.permission.RECORD_AUDIO)
         }
-    }
-}
 
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    Motor_rookieTheme {
-        Greeting("Android")
+        // 세팅 화면 왼쪽 위 '뒤로 가기'는 앱을 닫습니다.
+        setContent { PowerNapApp(onExit = ::finish) }
     }
 }

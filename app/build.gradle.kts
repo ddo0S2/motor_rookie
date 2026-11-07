@@ -7,6 +7,9 @@ android {
     namespace = "com.hyundai.motor_rookie"
     compileSdk = 34
 
+    // 기어(P단) 감지에 AAOS Car API 사용
+    useLibrary("android.car")
+
     defaultConfig {
         applicationId = "com.hyundai.motor_rookie"
         minSdk = 28
@@ -59,6 +62,22 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+
+    // ───── 파워냅 앱 추가 ─────
+    // Pleos Connect SDK
+    implementation("ai.pleos.playground:Vehicle:2.3.2")
+    // VERIFY: TTS/STT 아티팩트 이름과 버전은 각 SDK의 'SDK 가져오기' 문서와 맞춰 주세요.
+    implementation("ai.pleos.playground:TextToSpeech:3.3.1")
+    implementation("ai.pleos.playground:SpeechToText:3.3.1")
+
+    // 화면 아이콘 (버전은 Compose BOM이 관리)
+    implementation("androidx.compose.material:material-icons-extended")
+    // ViewModel, StateFlow 수집
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // ─────────────────────────
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
