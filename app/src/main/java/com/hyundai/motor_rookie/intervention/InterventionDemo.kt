@@ -1,0 +1,294 @@
+package com.hyundai.motor_rookie.intervention
+
+import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.LocalCafe
+import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
+
+// ─────────────────────────────────────────────
+// 시연/테스트용 화면
+//  - DrivingMainScreen: Stitch "메인 주행" 디자인 (PPT 2번). 메인 담당 팀원 화면이 생기면 교체
+//  - SimPanel: 시뮬레이션 패널 (설정 버튼으로 열고 닫기)
+//  - 그 위에 InterventionOverlay(퀴즈 + 배너)
+// ─────────────────────────────────────────────
+
+@Composable
+fun InterventionDemoScreen(
+    manager: InterventionManager,
+    settings: InterventionSettings,
+    onSettingsChange: (InterventionSettings) -> Unit
+) {
+    val ui by manager.ui.collectAsState()
+    var score by remember { mutableFloatStateOf(ui.score.toFloat()) }
+    var panelOpen by remember { mutableStateOf(false) }
+    val startedAt = remember { System.currentTimeMillis() }
+    var extraMin by remember { mutableIntStateOf(0) }
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val context = LocalContext.current
+
+    // 퀴즈 오답 점수를 시뮬레이션 점수에 반영 (실제로는 감지 파트가 반영)
+    LaunchedEffect(Unit) {
+        manager.events.collect { e ->
+            when (e) {
+                is InterventionEvent.QuizFinished -> {
+                    score = (score + e.penaltyPoints).coerceAtMost(100f)
+                    manager.onFatigueScore(score.roundToInt())
+                }
+                InterventionEvent.Emergency ->
+                    Toast.makeText(context, "무응답 3회 → 비상 모드 (다른 파트)", Toast.LENGTH_SHORT).show()
+                is InterventionEvent.Snoozed -> {}
+            }
+        }
+    }
+    LaunchedEffect(Unit) { while (true) { nowMs = System.currentTimeMillis(); delay(10_000) } }
+
+    val drivingMin = ((nowMs - startedAt) / 60_000).toInt() + extraMin
+
+    Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+    GyeolScaled(Modifier.background(GyeolColors.Bg)) {
+        DrivingMainScreen(
+            ui = ui,
+            drivingMinutes = drivingMin,
+            onTalk = { manager.talkNow() },
+            onFindRest = { manager.findRestNow() },
+            onSettings = { panelOpen = !panelOpen }
+        )
+
+        if (panelOpen) {
+            SimPanel(
+                manager = manager,
+                ui = ui,
+                score = score,
+                onScore = { score = it; manager.onFatigueScore(it.roundToInt()) },
+                settings = settings,
+                onSettingsChange = onSettingsChange,
+                onAddMinutes = { extraMin = (extraMin + it).coerceAtLeast(0) },
+                onClose = { panelOpen = false },
+                modifier = Modifier.align(Alignment.CenterEnd)
+            )
+        }
+    }
+    InterventionOverlay(manager)
+    }
+}
+
+// ───────────────── 메인 주행 화면 (Stitch 2_2 · 1_48) ─────────────────
+// 위: 배너 자리 140px · 가운데: 게이지 440px + gap-20 + 상태 글자 · 아래: 버튼 3개 (gap-6, max 1500)
+
+@Composable
+fun DrivingMainScreen(
+    ui: InterventionUi,
+    drivingMinutes: Int,
+    onTalk: () -> Unit,
+    onFindRest: () -> Unit,
+    onSettings: () -> Unit
+) {
+    val color = stageColor(ui.stage, ui.score)
+    Column(Modifier.fillMaxSize().padding(gdp(32))) {
+        Spacer(Modifier.height(gdp(140)))   // 배너 자리 (배너는 InterventionOverlay가 그림)
+
+        Row(
+            Modifier.weight(1f).fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            FatigueGauge(ui.score)
+            Spacer(Modifier.width(gdp(80)))
+            if (ui.restCard.visible && !ui.quiz.visible) {
+                Spacer(Modifier.width(gdp(580)))     // 쉼터 카드 자리 (카드는 InterventionOverlay가 그림)
+            } else Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(gdp(16)).background(color, CircleShape))
+                    Spacer(Modifier.width(gdp(12)))
+                    Text(stageLabel(ui.stage, ui.score), color = color, fontSize = gsp(40),
+                        fontWeight = FontWeight.Bold, letterSpacing = Tight)
+                }
+                Spacer(Modifier.height(gdp(16)))
+                Text(ui.status, color = GyeolColors.Text, fontSize = gsp(30), fontWeight = FontWeight.Medium,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(gdp(20)))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.Schedule, null, tint = GyeolColors.SubMain, modifier = Modifier.size(gdp(30)))
+                    Spacer(Modifier.width(gdp(12)))
+                    Text(drivingText(drivingMinutes), color = GyeolColors.SubMain, fontSize = gsp(24),
+                        fontWeight = FontWeight.Medium)
+                }
+                Spacer(Modifier.height(gdp(40)))
+                StageLegend(ui.score)
+            }
+        }
+
+        Row(
+            Modifier.align(Alignment.CenterHorizontally).widthIn(max = gdp(1500)).fillMaxWidth()
+                .padding(bottom = gdp(8)),
+            horizontalArrangement = Arrangement.spacedBy(gdp(24))
+        ) {
+            GyeolButton("말 걸어줘", Icons.Outlined.Mic, Modifier.weight(1f), container = GyeolColors.Blue, onClick = onTalk)
+            GyeolButton("쉼터 찾기", Icons.Outlined.LocalCafe, Modifier.weight(1f), container = GyeolColors.ButtonDark, onClick = onFindRest)
+            GyeolButton("설정", Icons.Outlined.Settings, Modifier.weight(1f), container = GyeolColors.ButtonDark, onClick = onSettings)
+        }
+    }
+}
+
+private fun drivingText(min: Int): String {
+    val h = min / 60
+    val m = min % 60
+    return if (h > 0) "${h}시간 ${m}분째 운전 중" else "${m}분째 운전 중"
+}
+
+// ───────────────── 시뮬레이션 패널 ─────────────────
+
+@Composable
+private fun SimPanel(
+    manager: InterventionManager,
+    ui: InterventionUi,
+    score: Float,
+    onScore: (Float) -> Unit,
+    settings: InterventionSettings,
+    onSettingsChange: (InterventionSettings) -> Unit,
+    onAddMinutes: (Int) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var simTemp by remember { mutableStateOf(manager.simClimate.current) }
+    var simWindow by remember { mutableStateOf(manager.simWindow.summary()) }
+    var simWaypoint by remember { mutableStateOf<String?>(null) }
+    var naviConnected by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            simTemp = manager.simClimate.current
+            simWindow = manager.simWindow.summary()
+            simWaypoint = manager.simNavigation.lastWaypoint?.displayName
+            naviConnected = manager.realNaviConnected
+            delay(500)
+        }
+    }
+    val scoreColor = GyeolColors.forScore(score.roundToInt())
+
+    Column(
+        modifier
+            .fillMaxHeight()
+            .width(gdp(640))
+            .background(GyeolColors.Surface, RoundedCornerShape(topStart = gdp(32), bottomStart = gdp(32)))
+            .padding(gdp(32))
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(gdp(20))
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("시뮬레이션 모드", color = GyeolColors.Text, fontSize = gsp(32), fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f))
+            IconButton(onClick = onClose, modifier = Modifier.size(gdp(64))) {
+                Icon(Icons.Rounded.Close, "닫기", tint = GyeolColors.Sub, modifier = Modifier.size(gdp(36)))
+            }
+        }
+
+        // 졸음 지수
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text("졸음 지수 ", color = GyeolColors.Sub, fontSize = gsp(24))
+            Text("${score.roundToInt()}", color = scoreColor, fontSize = gsp(48), fontWeight = FontWeight.Bold)
+        }
+        Slider(
+            value = score, onValueChange = onScore, valueRange = 0f..100f,
+            colors = SliderDefaults.colors(thumbColor = scoreColor, activeTrackColor = scoreColor,
+                inactiveTrackColor = GyeolColors.Raised)
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(gdp(12))) {
+            listOf(22, 48, 68, 78).forEach { v ->
+                GyeolButton("$v", null, Modifier.weight(1f), medium = true) { onScore(v.toFloat()) }
+            }
+        }
+
+        // 주행 시간
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(gdp(12))) {
+            Text("주행 시간", color = GyeolColors.Text, fontSize = gsp(24), modifier = Modifier.weight(1f))
+            GyeolButton("−30분", null, medium = true) { onAddMinutes(-30) }
+            GyeolButton("+30분", null, medium = true) { onAddMinutes(30) }
+        }
+
+        PanelToggle("버튼으로 대답 · 가짜 공조", settings.simulation) { onSettingsChange(settings.copy(simulation = it)) }
+        PanelToggle("공조 자동 조절", settings.climateAuto) { onSettingsChange(settings.copy(climateAuto = it)) }
+        PanelToggle("창문 자동 열기", settings.windowAuto) { onSettingsChange(settings.copy(windowAuto = it)) }
+        PanelToggle("비 오는 중 (창문 안 열기)", settings.simRaining) { onSettingsChange(settings.copy(simRaining = it)) }
+        PanelToggle("실제 Pleos 내비로 안내", settings.useRealNavi) { onSettingsChange(settings.copy(useRealNavi = it)) }
+
+        // 개입 민감도
+        Text("개입 민감도", color = GyeolColors.Text, fontSize = gsp(24))
+        Row(horizontalArrangement = Arrangement.spacedBy(gdp(12))) {
+            Sensitivity.values().forEach { sv ->
+                GyeolButton(sv.label, null, Modifier.weight(1f), container = if (settings.sensitivity == sv) GyeolColors.Blue else GyeolColors.Raised, medium = true) {
+                    onSettingsChange(settings.copy(sensitivity = sv))
+                }
+            }
+        }
+
+        if (settings.simulation) {
+            Text("가짜 공조: ${simTemp.temperature}℃ · 바람 ${simTemp.fanSpeed}단계",
+                color = GyeolColors.Sub, fontSize = gsp(22))
+            Text("가짜 창문: $simWindow", color = GyeolColors.Sub, fontSize = gsp(22))
+            Text("가짜 내비 경유지: ${simWaypoint ?: "없음"}", color = GyeolColors.Sub, fontSize = gsp(22))
+        }
+        Text(if (naviConnected) "실제 Pleos 내비: 연결됨 (안내 시작 → 실제 내비로 전송)" else "실제 Pleos 내비: [안내 시작]을 누르면 연결해요",
+            color = if (naviConnected) GyeolColors.Green else GyeolColors.Sub, fontSize = gsp(22))
+        Text("s_talk = ${"%.2f".format(ui.talkSignal)}", color = GyeolColors.Sub, fontSize = gsp(22))
+
+        Text("기록", color = GyeolColors.Text, fontSize = gsp(24), fontWeight = FontWeight.Bold)
+        ui.log.take(12).forEach { Text(it, color = GyeolColors.Sub, fontSize = gsp(18)) }
+    }
+}
+
+@Composable
+private fun PanelToggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Text(label, color = GyeolColors.Text, fontSize = gsp(24), modifier = Modifier.weight(1f))
+        Switch(
+            checked = checked, onCheckedChange = onChange,
+            colors = SwitchDefaults.colors(checkedTrackColor = GyeolColors.Blue, uncheckedTrackColor = GyeolColors.Raised)
+        )
+    }
+}
