@@ -4,6 +4,18 @@
     <uses-feature
         android:name="android.hardware.type.automotive"
         android:required="true" />
+    <uses-permission android:name="pleos.car.permission.CAR_DOORS" />
+    <uses-permission android:name="android.car.permission.CAR_SPEED" />
+    <uses-permission android:name="pleos.car.permission.CAR_DRIVE" />
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
+
+    <uses-permission android:name="pleos.car.permission.TTS_SERVICE" />
+    <uses-permission android:name="pleos.car.permission.TTS_SERVICE" />
 
     <application
         android:allowBackup="true"
@@ -20,12 +32,17 @@
             android:exported="true"
             android:label="@string/app_name"
             android:theme="@style/Theme.Motor_rookie">
+            <meta-data
+                android:name="distractionOptimized"
+                android:value="true" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
         </activity>
+
     </application>
 
 </manifest>
