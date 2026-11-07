@@ -2,6 +2,7 @@
 
 package com.hyundai.motor_rookie.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -22,6 +23,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -30,10 +34,12 @@ import androidx.compose.material.icons.filled.AccessibilityNew
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AirlineSeatReclineExtra
 import androidx.compose.material.icons.filled.AirlineSeatReclineNormal
+import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.AlarmOn
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Lightbulb
@@ -57,6 +63,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -83,11 +91,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.hyundai.motor_rookie.data.AlarmSound
 import com.hyundai.motor_rookie.data.NapSettings
 import java.util.Locale
 import kotlin.math.min
 import kotlin.math.roundToInt
-import androidx.activity.compose.BackHandler
 
 /** Stitch 디자인 캔버스 크기 */
 private val DesignWidth = 1280.dp
@@ -99,7 +107,7 @@ fun PowerNapApp(onExit: () -> Unit, vm: PowerNapViewModel = viewModel()) {
     // 설정 화면이 아닐 때는 뒤로 가기로 앱이 닫히지 않고 이전 단계로 이동합니다.
     BackHandler(enabled = s.screen != Screen.SETTINGS) { vm.onBack() }
     val background = when (s.screen) {
-        Screen.NAP_READY, Screen.TIMER_CONFIRM, Screen.NAPPING -> NapColors.Black
+        Screen.TIMER_CONFIRM, Screen.NAPPING -> NapColors.Black
         Screen.TIMER_SETUP, Screen.QUIZ -> NapColors.Deep
         else -> NapColors.Base
     }
@@ -117,16 +125,29 @@ fun PowerNapApp(onExit: () -> Unit, vm: PowerNapViewModel = viewModel()) {
                     .graphicsLayer { scaleX = scale; scaleY = scale }
                     .padding(32.dp),
             ) {
-                when (s.screen) {
-                    Screen.SETTINGS -> SettingsScreen(s, vm, onExit)
-                    Screen.NAP_READY -> NapReadyScreen(s, vm)
-                    Screen.TIMER_SETUP -> TimerSetupScreen(s, vm)
-                    Screen.TIMER_CONFIRM -> TimerConfirmScreen(s, vm)
-                    Screen.NAPPING -> NappingScreen(s, vm)
-                    Screen.QUIZ -> QuizScreen(s, vm)
-                    Screen.QUIZ_FAILED -> QuizFailedScreen(s, vm)
-                    Screen.STRETCHING -> StretchingScreen(s, vm)
-                    Screen.PASSED -> PassedScreen(s, vm)
+                if (s.screen == Screen.SETTINGS) {
+                    SettingsScreen(s, vm, onExit)
+                } else if (s.screen == Screen.ALARM_SOUND) {
+                    // 세팅의 하위 화면이라 '이전 / 파워냅 취소' 이동 바 없이 자체 뒤로 가기 버튼을 씁니다.
+                    AlarmSoundScreen(s, vm)
+                } else {
+                    // 세팅 화면을 제외한 모든 화면: 위쪽에 '이전' / '파워냅 취소' 버튼
+                    Column(Modifier.fillMaxSize()) {
+                        NapNavBar(onBack = vm::onBack, onCancel = vm::cancelNap)
+                        VSpace(16)
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                            when (s.screen) {
+                                Screen.TIMER_SETUP -> TimerSetupScreen(s, vm)
+                                Screen.TIMER_CONFIRM -> TimerConfirmScreen(s, vm)
+                                Screen.NAPPING -> NappingScreen(s, vm)
+                                Screen.QUIZ -> QuizScreen(s, vm)
+                                Screen.QUIZ_FAILED -> QuizFailedScreen(s, vm)
+                                Screen.STRETCHING -> StretchingScreen(s, vm)
+                                Screen.PASSED -> PassedScreen(s, vm)
+                                Screen.SETTINGS, Screen.ALARM_SOUND -> Unit
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -198,16 +219,24 @@ private fun SettingsScreen(s: UiState, vm: PowerNapViewModel, onExit: () -> Unit
                     supported = caps.seatRange != null,
                 ) { vm.setSeatDegrees(it.roundToInt()) }
                 SliderCard(
-                    Modifier.weight(1f), Icons.Filled.Thermostat, "온도", "${d.temperature}℃",
+                    Modifier.weight(1f), Icons.Filled.Thermostat, "온도",
+                    if (d.hvacOn) "${d.temperature}℃" else "공조 꺼짐",
                     d.temperature.toFloat(),
                     NapSettings.TEMP_MIN.toFloat()..NapSettings.TEMP_MAX.toFloat(),
                     supported = caps.temperatureRange != null,
+                    toggleOn = d.hvacOn,
+                    onToggle = vm::setHvacOn,
                 ) { vm.setTemperature(it.roundToInt()) }
                 SliderCard(
                     Modifier.weight(1f), Icons.Filled.Lightbulb, "조명 밝기", "${d.lightPercent}%",
                     d.lightPercent.toFloat(), 0f..100f,
                     supported = caps.lightRange != null,
                 ) { vm.setLightPercent(it.roundToInt()) }
+                AlarmSoundCard(
+                    Modifier.weight(1f),
+                    name = alarmSoundName(s.alarmSounds, d.alarmSoundUri),
+                    onClick = vm::openAlarmPicker,
+                )
             }
         }
 
@@ -234,8 +263,12 @@ private fun SliderCard(
     value: Float,
     range: ClosedFloatingPointRange<Float>,
     supported: Boolean,
+    /** 켜기/끄기 스위치가 있는 카드면 현재 상태, 없으면 null. 꺼져 있으면 슬라이더를 쓸 수 없습니다. */
+    toggleOn: Boolean? = null,
+    onToggle: ((Boolean) -> Unit)? = null,
     onChange: (Float) -> Unit,
 ) {
+    val active = toggleOn != false
     Column(
         modifier.fillMaxWidth().background(NapColors.Card, RoundedCornerShape(24.dp))
             .padding(horizontal = 24.dp, vertical = 20.dp),
@@ -253,7 +286,24 @@ private fun SliderCard(
                 )
             }
             Spacer(Modifier.weight(1f))
-            Text(valueText, fontSize = 32.sp, fontWeight = FontWeight.Bold, color = NapColors.Blue)
+            Text(
+                valueText, fontSize = if (active) 32.sp else 24.sp, fontWeight = FontWeight.Bold,
+                color = if (active) NapColors.Blue else NapColors.Muted,
+            )
+            if (toggleOn != null && onToggle != null) {
+                HSpace(16)
+                Switch(
+                    checked = toggleOn,
+                    onCheckedChange = onToggle,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = NapColors.White,
+                        checkedTrackColor = NapColors.Blue,
+                        uncheckedThumbColor = NapColors.Muted,
+                        uncheckedTrackColor = NapColors.Button,
+                        uncheckedBorderColor = NapColors.Button,
+                    ),
+                )
+            }
         }
         VSpace(18)
         // 설정값은 차량 지원 여부와 관계없이 조절·저장할 수 있습니다.
@@ -262,19 +312,109 @@ private fun SliderCard(
             value = value,
             onValueChange = onChange,
             valueRange = range,
+            enabled = active,
             modifier = Modifier.fillMaxWidth().height(40.dp),
             thumb = {
-                Box(Modifier.size(40.dp).background(NapColors.White, CircleShape))
+                Box(Modifier.size(40.dp).background(if (active) NapColors.White else NapColors.Muted, CircleShape))
             },
             track = { _ ->
                 val fraction = ((value - range.start) / (range.endInclusive - range.start)).coerceIn(0f, 1f)
                 Box(Modifier.fillMaxWidth().height(16.dp).background(NapColors.Button, CircleShape)) {
                     Box(
                         Modifier.fillMaxWidth(fraction).fillMaxHeight()
-                            .background(NapColors.Blue, CircleShape),
+                            .background(if (active) NapColors.Blue else NapColors.Muted, CircleShape),
                     )
                 }
             },
+        )
+    }
+}
+
+/** 세팅 화면 네 번째 카드: 누르면 알람 소리 고르기 화면으로 이동 */
+@Composable
+private fun AlarmSoundCard(modifier: Modifier, name: String, onClick: () -> Unit) {
+    Row(
+        modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(NapColors.Card)
+            .clickable(onClick = onClick).padding(horizontal = 24.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Filled.Alarm, null, tint = NapColors.White, modifier = Modifier.size(28.dp))
+        HSpace(12)
+        Text("알람 소리", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = NapColors.White)
+        Spacer(Modifier.weight(1f))
+        Text(name, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = NapColors.Blue, maxLines = 1)
+        HSpace(8)
+        Icon(Icons.Filled.ChevronRight, null, tint = NapColors.Blue, modifier = Modifier.size(32.dp))
+    }
+}
+
+private fun alarmSoundName(sounds: List<AlarmSound>, uri: String?): String =
+    sounds.firstOrNull { it.uri == uri }?.title ?: "기본 알람음"
+
+// ═════════════ 1-1. 알람 소리 고르기 (ALARM_SOUND) ═════════════
+
+@Composable
+private fun AlarmSoundScreen(s: UiState, vm: PowerNapViewModel) {
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().height(64.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(56.dp).clip(RoundedCornerShape(16.dp)).background(NapColors.Button)
+                    .clickable(onClick = vm::closeAlarmPicker),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.ChevronLeft, "뒤로 가기", tint = NapColors.White, modifier = Modifier.size(32.dp))
+            }
+            HSpace(16)
+            Text("알람 소리", fontSize = 32.sp, fontWeight = FontWeight.Bold, color = NapColors.White)
+            HSpace(16)
+            Text("눌러서 미리 들어 보고 골라 주세요", fontSize = 20.sp, color = NapColors.Muted)
+        }
+        VSpace(20)
+
+        if (s.alarmSounds.isEmpty()) {
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Text(
+                    "이 차량에는 고를 수 있는 알람음이 없어요. 기본 알람음으로 울려요.",
+                    fontSize = 24.sp, color = NapColors.Muted,
+                )
+            }
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                items(s.alarmSounds, key = { it.uri }) { sound ->
+                    val selected = sound.uri == s.pickedAlarmUri
+                    Row(
+                        Modifier.fillMaxWidth().height(88.dp).clip(RoundedCornerShape(20.dp))
+                            .background(if (selected) NapColors.Blue.copy(alpha = 0.18f) else NapColors.Card)
+                            .border(2.dp, if (selected) NapColors.Blue else NapColors.Card, RoundedCornerShape(20.dp))
+                            .clickable { vm.pickAlarmSound(sound.uri) }
+                            .padding(horizontal = 24.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (selected) {
+                            Icon(Icons.AutoMirrored.Filled.VolumeUp, null, tint = NapColors.Blue, modifier = Modifier.size(28.dp))
+                            HSpace(12)
+                        }
+                        Text(
+                            sound.title, fontSize = 24.sp, fontWeight = FontWeight.Medium,
+                            color = NapColors.White, maxLines = 1, modifier = Modifier.weight(1f),
+                        )
+                        if (selected) {
+                            Icon(Icons.Filled.Check, null, tint = NapColors.Blue, modifier = Modifier.size(28.dp))
+                        }
+                    }
+                }
+            }
+        }
+
+        VSpace(20)
+        ActionButton(
+            "이 소리로 선택", Icons.Filled.Check, NapColors.Blue, vm::confirmAlarmSound,
+            Modifier.fillMaxWidth(), enabled = s.pickedAlarmUri != null || s.alarmSounds.isEmpty(),
         )
     }
 }
@@ -318,76 +458,7 @@ private fun SeatIllustration(degrees: Int, modifier: Modifier) {
     }
 }
 
-// ═════════════ 2. P단 전환 직후 (NAP_READY) ═════════════
-
-@Composable
-private fun NapReadyScreen(s: UiState, vm: PowerNapViewModel) {
-    Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.Bedtime, null, tint = NapColors.White, modifier = Modifier.size(32.dp))
-            HSpace(12)
-            Text("파워냅", fontSize = 32.sp, fontWeight = FontWeight.Bold, color = NapColors.White)
-            Spacer(Modifier.weight(1f))
-            StatusChip("정차 중 · P")
-        }
-
-        Row(
-            Modifier.weight(1f).fillMaxWidth().padding(vertical = 24.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(40.dp),
-        ) {
-            Column(Modifier.weight(0.45f), horizontalAlignment = Alignment.CenterHorizontally) {
-                TimerGauge(340.dp, 12.dp, progress = null, onClick = vm::openTimerSetup) {
-                    Text(
-                        clock(s.timerMinutes * 60), fontSize = 84.sp,
-                        fontWeight = FontWeight.ExtraBold, color = NapColors.White,
-                    )
-                    VSpace(12)
-                    Text("알람까지", fontSize = 20.sp, fontWeight = FontWeight.Medium, color = NapColors.Muted)
-                }
-                VSpace(16)
-                Text("원을 누르면 1분 단위로 조절할 수 있어요", fontSize = 18.sp, color = NapColors.Muted)
-            }
-            Column(Modifier.weight(0.55f), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-                Text("시간을 골라 주세요", fontSize = 32.sp, fontWeight = FontWeight.Bold, color = NapColors.White)
-                PresetButtons(s.timerMinutes, vm::selectPreset, height = 96.dp, radius = 24.dp)
-                AppliedSettingsCard(s.saved ?: NapSettings.DEFAULT)
-            }
-        }
-
-        ActionButton("시작", Icons.Filled.PlayArrow, NapColors.Blue, vm::startNap, Modifier.fillMaxWidth())
-    }
-}
-
-@Composable
-private fun AppliedSettingsCard(settings: NapSettings) {
-    Column(
-        Modifier.fillMaxWidth().background(NapColors.Card, RoundedCornerShape(24.dp)).padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.Check, null, tint = NapColors.Green, modifier = Modifier.size(28.dp))
-            HSpace(12)
-            Text("파워냅 세팅 전환 완료", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = NapColors.White)
-        }
-        Row(Modifier.fillMaxWidth()) {
-            Telemetry(Icons.Filled.AirlineSeatReclineNormal, "시트 눕힘 ${settings.seatDegrees}°", Modifier.weight(1f))
-            Telemetry(Icons.Filled.Lightbulb, "조명 ${settings.lightPercent}%", Modifier.weight(1f))
-            Telemetry(Icons.Filled.Thermostat, "온도 ${settings.temperature}℃", Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-private fun Telemetry(icon: ImageVector, text: String, modifier: Modifier) {
-    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, tint = NapColors.Muted, modifier = Modifier.size(24.dp))
-        HSpace(10)
-        Text(text, fontSize = 20.sp, fontWeight = FontWeight.Medium, color = NapColors.Muted, maxLines = 1)
-    }
-}
-
-// ═════════════ 3. 타이머 조절 (TIMER_SETUP) ═════════════
+// ═════════════ 2. 타이머 조절 (TIMER_SETUP) ═════════════
 
 @Composable
 private fun TimerSetupScreen(s: UiState, vm: PowerNapViewModel) {
@@ -397,18 +468,20 @@ private fun TimerSetupScreen(s: UiState, vm: PowerNapViewModel) {
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
         NapHeader()
+        // 안내 멘트 (화면에 들어올 때 같은 내용을 음성으로도 읽어 줍니다)
+        GuideText(NapRules.SETUP_GUIDE_TITLE, NapRules.SETUP_GUIDE_SUB)
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            TimerGauge(440.dp, 16.dp, progress = s.timerMinutes / NapRules.MAX_MINUTES.toFloat()) {
-                BigClock(clock(s.timerMinutes * 60))
-                Text("알람까지", fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = NapColors.Outline)
+            TimerGauge(330.dp, 14.dp, progress = s.timerMinutes / NapRules.MAX_MINUTES.toFloat()) {
+                BigClock(clock(s.timerMinutes * 60), size = 92.sp)
+                Text("알람까지", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = NapColors.Outline)
             }
-            VSpace(24)
+            VSpace(20)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.AirlineSeatReclineExtra, null, tint = NapColors.Outline, modifier = Modifier.size(28.dp))
                 HSpace(8)
                 Text("시트를 눕히고 조명을 낮출게요", fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = NapColors.Outline)
             }
-            VSpace(24)
+            VSpace(20)
             Row(Modifier.width(672.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 listOf(-5, -1, 1, 5).forEach { delta ->
                     val enabled = if (delta < 0) s.timerMinutes > NapRules.MIN_MINUTES
@@ -428,19 +501,19 @@ private fun TimerSetupScreen(s: UiState, vm: PowerNapViewModel) {
         }
         Row(Modifier.width(768.dp), horizontalArrangement = Arrangement.spacedBy(32.dp)) {
             ActionButton(
-                "취소", Icons.Filled.Close, NapColors.ButtonAlt, vm::closeTimerSetup, Modifier.weight(1f),
+                "취소", Icons.Filled.Close, NapColors.ButtonAlt, vm::cancelNap, Modifier.weight(1f),
                 height = 100.dp, radius = 32.dp, fontSize = 40.sp, content = NapColors.TimerText,
                 weight = FontWeight.SemiBold,
             )
             ActionButton(
-                "시작", Icons.Outlined.PlayArrow, NapColors.Blue, vm::confirmTimer, Modifier.weight(1f),
+                "완료", Icons.Filled.Check, NapColors.Blue, vm::confirmTimer, Modifier.weight(1f),
                 height = 100.dp, radius = 32.dp, fontSize = 40.sp, weight = FontWeight.SemiBold,
             )
         }
     }
 }
 
-// ═════════════ 4. 시간 확인 (TIMER_CONFIRM) ═════════════
+// ═════════════ 3. 시간 확인 (TIMER_CONFIRM) ═════════════
 
 @Composable
 private fun TimerConfirmScreen(s: UiState, vm: PowerNapViewModel) {
@@ -450,22 +523,16 @@ private fun TimerConfirmScreen(s: UiState, vm: PowerNapViewModel) {
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
         NapHeader()
+        // 안내 멘트 (화면에 들어올 때 같은 내용을 음성으로도 읽어 줍니다)
+        GuideText(NapRules.confirmTitle(s.timerMinutes), NapRules.CONFIRM_GUIDE_SUB)
+        // 앞 화면(타이머 조절)에서 정한 시간을 그대로 보여 줍니다. 시간을 바꾸려면 위쪽 '이전' 버튼을 누르세요.
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            TimerGauge(
-                400.dp, 16.dp,
-                progress = s.timerMinutes / NapRules.MAX_MINUTES.toFloat(),
-                onClick = vm::openTimerSetup,
-            ) {
-                BigClock(clock(s.timerMinutes * 60))
+            TimerGauge(370.dp, 16.dp, progress = s.timerMinutes / NapRules.MAX_MINUTES.toFloat()) {
+                BigClock(clock(s.timerMinutes * 60), size = 104.sp)
                 Text("알람까지", fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = NapColors.Outline)
             }
-            VSpace(24)
+            VSpace(28)
             AppliedStatusLine(s.saved ?: NapSettings.DEFAULT)
-            VSpace(24)
-            PresetButtons(
-                s.timerMinutes, vm::selectPreset, height = 100.dp, radius = 28.dp,
-                modifier = Modifier.width(672.dp),
-            )
         }
         ActionButton(
             "시작", Icons.Outlined.PlayArrow, NapColors.Blue, vm::startNap, Modifier.width(672.dp),
@@ -474,7 +541,7 @@ private fun TimerConfirmScreen(s: UiState, vm: PowerNapViewModel) {
     }
 }
 
-// ═════════════ 5. 파워냅 진행 중 (NAPPING) ═════════════
+// ═════════════ 4. 파워냅 진행 중 (NAPPING) ═════════════
 
 @Composable
 private fun NappingScreen(s: UiState, vm: PowerNapViewModel) {
@@ -486,7 +553,7 @@ private fun NappingScreen(s: UiState, vm: PowerNapViewModel) {
         NapHeader()
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             val progress = if (s.napTotalSec > 0) s.remainingSec / s.napTotalSec.toFloat() else 0f
-            TimerGauge(440.dp, 16.dp, progress = progress) {
+            TimerGauge(400.dp, 16.dp, progress = progress) {
                 BigClock(clock(s.remainingSec))
                 Text("남은 시간", fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = NapColors.Outline)
             }
@@ -506,7 +573,7 @@ private fun NappingScreen(s: UiState, vm: PowerNapViewModel) {
     }
 }
 
-// ═════════════ 6. 각성 확인 퀴즈 (QUIZ) ═════════════
+// ═════════════ 5. 각성 확인 퀴즈 (QUIZ) ═════════════
 
 @Composable
 private fun QuizScreen(s: UiState, vm: PowerNapViewModel) {
@@ -540,10 +607,10 @@ private fun QuizScreen(s: UiState, vm: PowerNapViewModel) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text("다시 출발할 준비 되셨나요?", fontSize = 60.sp, fontWeight = FontWeight.Bold, color = NapColors.TimerText)
             Text("간단한 질문 하나에 답해 주세요", fontSize = 30.sp, fontWeight = FontWeight.Medium, color = NapColors.SubText)
-            VSpace(32)
+            VSpace(20)
             Column(
                 Modifier.width(896.dp).background(NapColors.QuizCard, RoundedCornerShape(32.dp))
-                    .padding(horizontal = 48.dp, vertical = 36.dp),
+                    .padding(horizontal = 48.dp, vertical = 28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -637,7 +704,7 @@ private fun VoiceStatus(s: UiState) {
     }
 }
 
-// ═════════════ 7. 미통과 (QUIZ_FAILED) ═════════════
+// ═════════════ 6. 미통과 (QUIZ_FAILED) ═════════════
 
 @Composable
 private fun QuizFailedScreen(s: UiState, vm: PowerNapViewModel) {
@@ -688,15 +755,9 @@ private fun QuizFailedScreen(s: UiState, vm: PowerNapViewModel) {
     }
 }
 
-// ═════════════ 8. 스트레칭 안내 (디자인 없음: 재출발 확인 화면 스타일로 구성) ═════════════
+// ═════════════ 7. 스트레칭 안내 (디자인 없음: 재출발 확인 화면 스타일로 구성) ═════════════
 
-private val stretchingSteps = listOf(
-    "목 돌리기" to "고개를 천천히 오른쪽으로 다섯 번, 왼쪽으로 다섯 번 돌려요.",
-    "어깨 으쓱하기" to "어깨를 귀까지 끌어올렸다가 툭 내려놓기를 다섯 번 해요.",
-    "손목·손가락 풀기" to "주먹을 꽉 쥐었다가 활짝 펴기를 열 번 해요.",
-    "허리 비틀기" to "등받이를 잡고 상체를 좌우로 천천히 비틀어 10초씩 버텨요.",
-    "깊게 숨쉬기" to "코로 4초 들이마시고 입으로 6초 내쉬기를 세 번 해요.",
-)
+// 동작 목록과 음성 안내 문구는 PowerNapViewModel.kt 의 NapRules.STRETCH_STEPS 에 있습니다.
 
 @Composable
 private fun StretchingScreen(s: UiState, vm: PowerNapViewModel) {
@@ -706,22 +767,39 @@ private fun StretchingScreen(s: UiState, vm: PowerNapViewModel) {
         }
         VSpace(20)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            stretchingSteps.forEachIndexed { i, (name, how) ->
+            NapRules.STRETCH_STEPS.forEachIndexed { i, step ->
+                // 지금 음성으로 안내 중인 동작은 파란 테두리로 강조합니다.
+                val active = i == s.stretchStep
                 Row(
                     Modifier.fillMaxWidth().weight(1f)
-                        .background(NapColors.Card, RoundedCornerShape(24.dp)).padding(horizontal = 24.dp),
+                        .background(
+                            if (active) NapColors.Blue.copy(alpha = 0.12f) else NapColors.Card,
+                            RoundedCornerShape(24.dp),
+                        )
+                        .border(
+                            2.dp, if (active) NapColors.Blue else NapColors.Card, RoundedCornerShape(24.dp),
+                        )
+                        .padding(horizontal = 24.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Box(
-                        Modifier.size(48.dp).background(NapColors.Blue.copy(alpha = 0.15f), CircleShape),
+                        Modifier.size(48.dp).background(
+                            if (active) NapColors.Blue else NapColors.Blue.copy(alpha = 0.15f), CircleShape,
+                        ),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text("${i + 1}", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = NapColors.Blue)
+                        Text(
+                            "${i + 1}", fontSize = 22.sp, fontWeight = FontWeight.Bold,
+                            color = if (active) NapColors.White else NapColors.Blue,
+                        )
                     }
                     HSpace(20)
-                    Column {
-                        Text(name, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = NapColors.White)
-                        Text(how, fontSize = 20.sp, color = NapColors.Muted)
+                    Column(Modifier.weight(1f)) {
+                        Text(step.name, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = NapColors.White)
+                        Text(step.how, fontSize = 20.sp, color = if (active) NapColors.SubText else NapColors.Muted)
+                    }
+                    if (active) {
+                        Icon(Icons.AutoMirrored.Filled.VolumeUp, null, tint = NapColors.Blue, modifier = Modifier.size(32.dp))
                     }
                 }
             }
@@ -734,7 +812,7 @@ private fun StretchingScreen(s: UiState, vm: PowerNapViewModel) {
     }
 }
 
-// ═════════════ 9. 통과 (DEPART) ═════════════
+// ═════════════ 8. 통과 (DEPART) ═════════════
 
 @Composable
 private fun PassedScreen(s: UiState, vm: PowerNapViewModel) {
@@ -776,7 +854,7 @@ private fun PassedScreen(s: UiState, vm: PowerNapViewModel) {
                 )
                 Text(
                     "${s.quizTotal}문제 모두 잘 맞혔어요 · 평균 반응 " +
-                        String.format(Locale.KOREA, "%.1f", s.avgReactionSec) + "초",
+                            String.format(Locale.KOREA, "%.1f", s.avgReactionSec) + "초",
                     fontSize = 24.sp, color = NapColors.Muted,
                 )
                 ResultChips(s.quizResults, failColor = NapColors.Orange, bordered = true)
@@ -791,6 +869,39 @@ private fun PassedScreen(s: UiState, vm: PowerNapViewModel) {
 }
 
 // ═════════════ 공통 컴포넌트 ═════════════
+
+/** 세팅 화면을 제외한 모든 화면 위쪽의 '이전' / '파워냅 취소' 버튼 */
+@Composable
+private fun NapNavBar(onBack: () -> Unit, onCancel: () -> Unit) {
+    Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
+        NavPill("이전", Icons.Filled.ChevronLeft, NapColors.White, onBack)
+        Spacer(Modifier.weight(1f))
+        NavPill("파워냅 취소", Icons.Filled.Close, NapColors.Muted, onCancel)
+    }
+}
+
+@Composable
+private fun NavPill(text: String, icon: ImageVector, contentColor: Color, onClick: () -> Unit) {
+    Row(
+        Modifier.clip(CircleShape).background(NapColors.Card).clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = contentColor, modifier = Modifier.size(24.dp))
+        HSpace(8)
+        Text(text, fontSize = 22.sp, fontWeight = FontWeight.Medium, color = contentColor)
+    }
+}
+
+/** 화면 상단 안내 멘트: 큰 제목 + 보조 문구 */
+@Composable
+private fun GuideText(title: String, sub: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(title, fontSize = 40.sp, fontWeight = FontWeight.Bold, color = NapColors.White)
+        VSpace(8)
+        Text(sub, fontSize = 24.sp, fontWeight = FontWeight.Medium, color = NapColors.Outline)
+    }
+}
 
 @Composable
 private fun NapHeader() {
@@ -854,8 +965,8 @@ private fun TimerGauge(
 }
 
 @Composable
-private fun BigClock(text: String) =
-    Text(text, fontSize = 112.sp, fontWeight = FontWeight.Bold, color = NapColors.TimerText, letterSpacing = (-2).sp)
+private fun BigClock(text: String, size: TextUnit = 112.sp) =
+    Text(text, fontSize = size, fontWeight = FontWeight.Bold, color = NapColors.TimerText, letterSpacing = (-2).sp)
 
 @Composable
 private fun AppliedStatusLine(settings: NapSettings) {
@@ -863,7 +974,10 @@ private fun AppliedStatusLine(settings: NapSettings) {
         Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) {
             StatusItem(Icons.Filled.AirlineSeatReclineExtra, "시트 눕힘")
             StatusItem(Icons.Filled.Lightbulb, "조명 ${settings.lightPercent}%")
-            StatusItem(Icons.Filled.Thermostat, "온도 ${settings.temperature}℃")
+            StatusItem(
+                Icons.Filled.Thermostat,
+                if (settings.hvacOn) "온도 ${settings.temperature}℃" else "공조 꺼짐",
+            )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.CheckCircle, null, tint = NapColors.Green, modifier = Modifier.size(24.dp))
@@ -879,29 +993,6 @@ private fun StatusItem(icon: ImageVector, text: String) {
         Icon(icon, null, tint = NapColors.White, modifier = Modifier.size(28.dp))
         HSpace(8)
         Text(text, fontSize = 24.sp, fontWeight = FontWeight.Medium, color = NapColors.White)
-    }
-}
-
-@Composable
-private fun PresetButtons(
-    selected: Int,
-    onSelect: (Int) -> Unit,
-    height: Dp,
-    radius: Dp,
-    modifier: Modifier = Modifier,
-) {
-    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        NapRules.PRESETS.forEach { minutes ->
-            ActionButton(
-                text = "${minutes}분",
-                icon = null,
-                // 1분 단위로 직접 조절해 프리셋과 다른 값이면 둘 다 선택 해제 상태로 보입니다.
-                container = if (selected == minutes) NapColors.Blue else NapColors.Button,
-                onClick = { onSelect(minutes) },
-                modifier = Modifier.weight(1f),
-                height = height, radius = radius, fontSize = 32.sp,
-            )
-        }
     }
 }
 

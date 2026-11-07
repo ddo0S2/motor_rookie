@@ -7,6 +7,8 @@ data class CabinState(
     val seatAngle: Int? = null,
     val lightLevel: Int? = null,
     val temperature: Float? = null,
+    /** 공조(에어컨·히터) 전원. true = 켜짐, false = 꺼짐 */
+    val hvacPower: Boolean? = null,
 )
 
 /** 차량이 보고한 지원 범위. null 이면 이 차량에서 지원하지 않는 기능입니다. */
@@ -32,7 +34,7 @@ interface VehicleGateway {
 /** SDK 연동 전에 화면 흐름만 확인할 때 쓰는 가짜 차량 */
 class FakeVehicleGateway : VehicleGateway {
 
-    private var state = CabinState(seatAngle = 8, lightLevel = 7, temperature = 22f)
+    private var state = CabinState(seatAngle = 8, lightLevel = 7, temperature = 22f, hvacPower = true)
 
     override suspend fun connect() = Unit
 
@@ -49,6 +51,7 @@ class FakeVehicleGateway : VehicleGateway {
             seatAngle = state.seatAngle ?: this.state.seatAngle,
             lightLevel = state.lightLevel ?: this.state.lightLevel,
             temperature = state.temperature ?: this.state.temperature,
+            hvacPower = state.hvacPower ?: this.state.hvacPower,
         )
         Log.d("FakeVehicle", "적용됨: ${this.state}")
     }
