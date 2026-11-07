@@ -1,9 +1,11 @@
 package com.hyundai.motor_rookie
 
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -24,8 +26,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
+import com.hyundai.motor_rookie.alert.LevelVoice
 import com.hyundai.motor_rookie.fatigue.DetectionModule
+import com.hyundai.motor_rookie.fatigue.FatigueConfig
 import com.hyundai.motor_rookie.fatigue.FatigueDebugPanel
+import com.hyundai.motor_rookie.fatigue.FatigueEngine
 import com.hyundai.motor_rookie.fatigue.Sensitivity
 import com.hyundai.motor_rookie.ui.main.MainScreen
 import com.hyundai.motor_rookie.ui.theme.Motor_rookieTheme
@@ -40,12 +45,27 @@ class MainActivity : ComponentActivity() {
 
     // ───── 여기 3개만 바꿔 가며 확인 ─────
     /** true = CSV 시연 데이터 재생, false = 실제 차량 SDK (PleosVehicleDataSource 의 TODO 를 채운 뒤) */
-    private val useSimulation = true
+    private val useSimulation = false
     /** 재생할 데이터: "sim/drowsy_drive.csv"(졸음 운전) 또는 "sim/normal_drive.csv"(정상 운전) */
     private val simFile = "sim/drowsy_drive.csv"
     /** 재생 속도. 60 = 약 2분 30초, 20 = 약 8분 */
     private val speedFactor = 60.0
+    /** true = 에뮬레이터 실시간 테스트용으로 시간을 줄임 (기준선 3분, 20분이면 시간 점수 최대). 제출 전 false! */
+    private val shortTest = true
     // ────────────────────────────────────
+
+    /**
+     * 차량 권한(속도 CAR_SPEED, 핸들·기어 CAR_DRIVE)을 묻는 창. 허용하면 감지를 다시 시작한다.
+     * 주의: 이 창은 시스템 화면이라 D단에서는 막힌다 → P단에서 허용하거나 adb pm grant 로 허용.
+     */
+    private val askPermissions =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+            Log.d("MAIN", "권한 결과: $result")
+            if (result.values.all { it }) startDetection()
+        }
+
+    /** 단계가 올라갈 때 "지금 ○○이 필요합니다" 음성 안내 */
+    private val voice by lazy { LevelVoice(this) }
 
     /** 감지 모듈. "처음부터 다시"를 누르면 새로 만든다. */
     private val detection = mutableStateOf<DetectionModule?>(null)
@@ -56,6 +76,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         startDetection()
+        val missing = CAR_PERMISSIONS.filter {
+            checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (!useSimulation && missing.isNotEmpty()) {
+            askPermissions.launch(missing.toTypedArray())
+        }
 
         setContent {
             Motor_rookieTheme {
@@ -71,6 +97,7 @@ class MainActivity : ComponentActivity() {
                             detection = d,
                             onRestart = { startDetection() },
                             onBack = { showDebug.value = false },
+                            onVoiceTest = { voice.speak("지금 휴식이 필요합니다") },
                         )
                     } else {
                         MainScreen(
@@ -98,14 +125,28 @@ class MainActivity : ComponentActivity() {
             simFile = simFile,
             speedFactor = speedFactor,
         )
-        val module = DetectionModule(source, lifecycleScope)
+        val engine = if (shortTest) {
+            FatigueEngine(FatigueConfig(baselineSec = 180, fullFatigueSec = 1200.0))
+        } else {
+            FatigueEngine()
+        }
+        val module = DetectionModule(source, lifecycleScope, engine)
         module.start()
+        voice.watch(module.fatigue, lifecycleScope)
         detection.value = module
     }
 
     override fun onDestroy() {
         detection.value?.stop()
+        voice.release()
         super.onDestroy()
+    }
+
+    private companion object {
+        val CAR_PERMISSIONS = listOf(
+            "android.car.permission.CAR_SPEED",   // 속도 (안드로이드 차량 표준 API)
+            "pleos.car.permission.CAR_DRIVE",     // 핸들·기어 (Pleos SDK)
+        )
     }
 }
 
@@ -113,7 +154,12 @@ class MainActivity : ComponentActivity() {
  * 확인용 화면 (설정 > 시뮬레이션 모드 자리): 디버그 패널 + 테스트 버튼.
  */
 @Composable
-private fun DetectionScreen(detection: DetectionModule, onRestart: () -> Unit, onBack: () -> Unit) {
+private fun DetectionScreen(
+    detection: DetectionModule,
+    onRestart: () -> Unit,
+    onBack: () -> Unit,
+    onVoiceTest: () -> Unit,
+) {
     val state = detection.fatigue.collectAsState().value
     val sensitivity = remember(detection) { mutableStateOf(detection.engine.sensitivity) }
 
@@ -124,7 +170,10 @@ private fun DetectionScreen(detection: DetectionModule, onRestart: () -> Unit, o
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        OutlinedButton(onClick = onBack) { Text("← 주행 화면으로") }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onBack) { Text("← 주행 화면으로") }
+            OutlinedButton(onClick = onVoiceTest) { Text("음성 테스트") }
+        }
 
         FatigueDebugPanel(state = state, modifier = Modifier.fillMaxWidth())
 
