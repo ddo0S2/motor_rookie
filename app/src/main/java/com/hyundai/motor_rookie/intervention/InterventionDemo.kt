@@ -62,9 +62,13 @@ import kotlin.math.roundToInt
 fun InterventionDemoScreen(
     manager: InterventionManager,
     settings: InterventionSettings,
-    onSettingsChange: (InterventionSettings) -> Unit
+    onSettingsChange: (InterventionSettings) -> Unit,
+    detection: DetectionLink? = null
 ) {
     val ui by manager.ui.collectAsState()
+    // 감지 모듈과 연결돼 있으면 점수는 감지 모듈이 넣는다 (슬라이더는 꺼 둠)
+    val live = detection?.takeIf { it.useDetection }?.live
+    val feed: (Int) -> Unit = detection?.feedScore ?: { manager.onFatigueScore(it) }
     var score by remember { mutableFloatStateOf(ui.score.toFloat()) }
     var panelOpen by remember { mutableStateOf(false) }
     val startedAt = remember { System.currentTimeMillis() }
@@ -77,8 +81,11 @@ fun InterventionDemoScreen(
         manager.events.collect { e ->
             when (e) {
                 is InterventionEvent.QuizFinished -> {
-                    score = (score + e.penaltyPoints).coerceAtMost(100f)
-                    manager.onFatigueScore(score.roundToInt())
+                    // 감지 모듈 연결 중이면 MainActivity 가 퀴즈 결과를 감지 엔진(s_talk)에 넘긴다
+                    if (detection?.useDetection != true) {
+                        score = (score + e.penaltyPoints).coerceAtMost(100f)
+                        feed(score.roundToInt())
+                    }
                 }
                 InterventionEvent.Emergency ->
                     Toast.makeText(context, "무응답 3회 → 비상 모드 (다른 파트)", Toast.LENGTH_SHORT).show()
@@ -88,7 +95,7 @@ fun InterventionDemoScreen(
     }
     LaunchedEffect(Unit) { while (true) { nowMs = System.currentTimeMillis(); delay(10_000) } }
 
-    val drivingMin = ((nowMs - startedAt) / 60_000).toInt() + extraMin
+    val drivingMin = live?.drivingMinutes ?: (((nowMs - startedAt) / 60_000).toInt() + extraMin)
 
     Box(Modifier.fillMaxSize().safeDrawingPadding()) {
     GyeolScaled(Modifier.background(GyeolColors.Bg)) {
@@ -105,7 +112,8 @@ fun InterventionDemoScreen(
                 manager = manager,
                 ui = ui,
                 score = score,
-                onScore = { score = it; manager.onFatigueScore(it.roundToInt()) },
+                onScore = { score = it; feed(it.roundToInt()) },
+                detection = detection,
                 settings = settings,
                 onSettingsChange = onSettingsChange,
                 onAddMinutes = { extraMin = (extraMin + it).coerceAtLeast(0) },
@@ -194,8 +202,10 @@ private fun SimPanel(
     onSettingsChange: (InterventionSettings) -> Unit,
     onAddMinutes: (Int) -> Unit,
     onClose: () -> Unit,
+    detection: DetectionLink? = null,
     modifier: Modifier = Modifier
 ) {
+    val fromDetection = detection?.useDetection == true
     var simTemp by remember { mutableStateOf(manager.simClimate.current) }
     var simWindow by remember { mutableStateOf(manager.simWindow.summary()) }
     var simWaypoint by remember { mutableStateOf<String?>(null) }
@@ -209,7 +219,7 @@ private fun SimPanel(
             delay(500)
         }
     }
-    val scoreColor = GyeolColors.forScore(score.roundToInt())
+    val scoreColor = GyeolColors.forScore(if (fromDetection) ui.score else score.roundToInt())
 
     Column(
         modifier
@@ -228,19 +238,38 @@ private fun SimPanel(
             }
         }
 
+        // 감지 모듈 연결 (1번 파트)
+        if (detection != null) {
+            PanelToggle("졸음 지수를 감지 모듈에서 받기", detection.useDetection, detection.onUseDetectionChange)
+            detection.live?.let { s ->
+                Text(
+                    "감지: ${s.score}점 · 운전 ${s.drivingMinutes}분 · 기준선 ${if (s.baselineReady) "완료" else "학습 중"}" +
+                        if (s.reasons.isNotEmpty()) " · ${s.reasons.joinToString(" · ")}" else "",
+                    color = GyeolColors.Sub, fontSize = gsp(22)
+                )
+                Text(
+                    "신호  시간 ${"%.2f".format(s.signals.time)} · 핸들 ${"%.2f".format(s.signals.steer)} · " +
+                        "속도 ${"%.2f".format(s.signals.speed)} · 대화 ${"%.2f".format(s.signals.talk)}",
+                    color = GyeolColors.Sub, fontSize = gsp(22)
+                )
+            }
+            GyeolButton("감지 처음부터 다시", null, medium = true) { detection.onRestart() }
+        }
+
         // 졸음 지수
+        val shown = if (fromDetection) ui.score.toFloat() else score
         Row(verticalAlignment = Alignment.Bottom) {
-            Text("졸음 지수 ", color = GyeolColors.Sub, fontSize = gsp(24))
-            Text("${score.roundToInt()}", color = scoreColor, fontSize = gsp(48), fontWeight = FontWeight.Bold)
+            Text(if (fromDetection) "졸음 지수 (감지 모듈) " else "졸음 지수 ", color = GyeolColors.Sub, fontSize = gsp(24))
+            Text("${shown.roundToInt()}", color = scoreColor, fontSize = gsp(48), fontWeight = FontWeight.Bold)
         }
         Slider(
-            value = score, onValueChange = onScore, valueRange = 0f..100f,
+            value = shown, onValueChange = onScore, valueRange = 0f..100f, enabled = !fromDetection,
             colors = SliderDefaults.colors(thumbColor = scoreColor, activeTrackColor = scoreColor,
                 inactiveTrackColor = GyeolColors.Raised)
         )
         Row(horizontalArrangement = Arrangement.spacedBy(gdp(12))) {
             listOf(22, 48, 68, 78).forEach { v ->
-                GyeolButton("$v", null, Modifier.weight(1f), medium = true) { onScore(v.toFloat()) }
+                GyeolButton("$v", null, Modifier.weight(1f), medium = true) { if (!fromDetection) onScore(v.toFloat()) }
             }
         }
 

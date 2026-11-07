@@ -1,58 +1,79 @@
 package com.hyundai.motor_rookie
 
+import ai.pleos.playground.vehicle.Vehicle
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
 import com.hyundai.motor_rookie.alert.LevelVoice
+import com.hyundai.motor_rookie.alert.PleosSpeaker
 import com.hyundai.motor_rookie.fatigue.DetectionModule
 import com.hyundai.motor_rookie.fatigue.FatigueConfig
-import com.hyundai.motor_rookie.fatigue.FatigueDebugPanel
 import com.hyundai.motor_rookie.fatigue.FatigueEngine
-import com.hyundai.motor_rookie.fatigue.Sensitivity
-import com.hyundai.motor_rookie.ui.main.MainScreen
+import com.hyundai.motor_rookie.fatigue.FatigueLevel
+import com.hyundai.motor_rookie.intervention.AndroidLocationSource
+import com.hyundai.motor_rookie.intervention.AndroidStt
+import com.hyundai.motor_rookie.intervention.DetectionLink
+import com.hyundai.motor_rookie.intervention.GyeolApp
+import com.hyundai.motor_rookie.intervention.InterventionEvent
+import com.hyundai.motor_rookie.intervention.InterventionManager
+import com.hyundai.motor_rookie.intervention.InterventionSettings
+import com.hyundai.motor_rookie.intervention.InterventionSettingsStore
+import com.hyundai.motor_rookie.intervention.ManualVoiceInput
+import com.hyundai.motor_rookie.intervention.PleosClimateController
+import com.hyundai.motor_rookie.intervention.PleosNavigationController
+import com.hyundai.motor_rookie.intervention.PleosVoiceOutput
+import com.hyundai.motor_rookie.intervention.RestRepository
+import com.hyundai.motor_rookie.intervention.SimClimateController
+import com.hyundai.motor_rookie.intervention.Stage
 import com.hyundai.motor_rookie.ui.theme.Motor_rookieTheme
 import com.hyundai.motor_rookie.vehicle.VehicleSources
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 /**
- * 앱 시작 화면.
- * - 기본: Stitch 디자인의 주행 메인 화면 (MainScreen)
- * - [설정] 버튼: 시뮬레이션·민감도 확인 화면 (디버그 패널)
+ * 앱 시작점. 1번 파트(감지)와 2·3번 파트(대화·공조·창문·쉼터)를 여기서 잇는다.
+ *
+ *  화면:  처음 설정 → 음성 테스트 → 주행 메인   (GyeolApp, 2·3번 파트 화면)
+ *  흐름:  차량 데이터 → DetectionModule(졸음 점수) → feedScore()
+ *           → 단계가 오르면 "지금 ○○이 필요합니다" 안내(LevelVoice)
+ *           → InterventionManager 가 퀴즈 / 공조 / 창문·쉼터 안내를 저절로 시작
+ *         퀴즈 결과 → 감지 엔진 onTalkResult() → 대화 반응 점수(s_talk)에 반영
  */
 class MainActivity : ComponentActivity() {
 
-    // ───── 여기 3개만 바꿔 가며 확인 ─────
-    /** true = CSV 시연 데이터 재생, false = 실제 차량 SDK (PleosVehicleDataSource 의 TODO 를 채운 뒤) */
-    private val useSimulation = false
+    // ───── 감지 모듈 스위치 (1번 파트) ─────
+    /** true = CSV 시연 데이터 재생, false = 에뮬레이터/실제 차 값 (Virtual Console) */
+    private val useSimulation = true
     /** 재생할 데이터: "sim/drowsy_drive.csv"(졸음 운전) 또는 "sim/normal_drive.csv"(정상 운전) */
     private val simFile = "sim/drowsy_drive.csv"
-    /** 재생 속도. 60 = 약 2분 30초, 20 = 약 8분 */
+    /** CSV 재생 속도. 60 = 약 2분 30초, 20 = 약 8분 */
     private val speedFactor = 60.0
     /** true = 에뮬레이터 실시간 테스트용으로 시간을 줄임 (기준선 3분, 20분이면 시간 점수 최대). 제출 전 false! */
-    private val shortTest = true
+    private val shortTest = false
     // ────────────────────────────────────
+
+    private lateinit var vehicle: Vehicle
+    private lateinit var manager: InterventionManager
+    private var navi: PleosNavigationController? = null
+    private var settings by mutableStateOf(InterventionSettings())
+
+    /** 앱 전체 공용 음성 (Pleos TTS). 단계 안내와 퀴즈가 같이 쓴다. */
+    private lateinit var speaker: PleosSpeaker
+    private lateinit var levelVoice: LevelVoice
+
+    /** 감지 모듈. "감지 처음부터 다시"를 누르면 새로 만든다. */
+    private var detection by mutableStateOf<DetectionModule?>(null)
+    /** true = 졸음 지수를 감지 모듈에서 받음, false = 시뮬레이션 패널 슬라이더 */
+    private var useDetection by mutableStateOf(true)
+    private var bridgeJob: Job? = null
 
     /**
      * 차량 권한(속도 CAR_SPEED, 핸들·기어 CAR_DRIVE)을 묻는 창. 허용하면 감지를 다시 시작한다.
@@ -60,64 +81,82 @@ class MainActivity : ComponentActivity() {
      */
     private val askPermissions =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
-            Log.d("MAIN", "권한 결과: $result")
+            Log.d(TAG, "권한 결과: $result")
             if (result.values.all { it }) startDetection()
         }
 
-    /** 단계가 올라갈 때 "지금 ○○이 필요합니다" 음성 안내 */
-    private val voice by lazy { LevelVoice(this) }
-
-    /** 감지 모듈. "처음부터 다시"를 누르면 새로 만든다. */
-    private val detection = mutableStateOf<DetectionModule?>(null)
-
-    /** 지금 보이는 화면: false = 주행 메인, true = 확인용(디버그) 화면 */
-    private val showDebug = mutableStateOf(false)
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        startDetection()
-        val missing = CAR_PERMISSIONS.filter {
-            checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
-        }
-        if (!useSimulation && missing.isNotEmpty()) {
-            askPermissions.launch(missing.toTypedArray())
-        }
+        // enableEdgeToEdge()  ← 하단 Pleos 독(공조 바) 뒤로 화면이 숨어서 끔
 
-        setContent {
-            Motor_rookieTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background,
-                ) {
-                    val d = detection.value
-                    if (d == null) {
-                        // 감지 모듈 준비 전 (아주 잠깐)
-                    } else if (showDebug.value) {
-                        DetectionScreen(
-                            detection = d,
-                            onRestart = { startDetection() },
-                            onBack = { showDebug.value = false },
-                            onVoiceTest = { voice.speak("지금 휴식이 필요합니다") },
-                        )
-                    } else {
-                        MainScreen(
-                            state = d.fatigue.collectAsState().value,
-                            onTalk = { Log.d("MAIN", "말 걸어줘 → TODO: 2번 팀원 대화 시작 연결") },
-                            onFindRest = { Log.d("MAIN", "쉼터 찾기 → TODO: 3번 팀원 쉼터 안내 연결") },
-                            onSettings = { showDebug.value = true },
-                            // 원래는 정차 중에만 열려야 하지만(Pleos 주행 규제),
-                            // 시연·개발 중에는 시뮬레이션 화면으로 가야 해서 항상 열어 둔다.
-                            settingsEnabled = true,
-                        )
+        vehicle = Vehicle(this)
+        vehicle.initialize()
+
+        // 실제 Pleos 내비 (연결 실패해도 앱은 가짜 내비로 계속 동작)
+        navi = runCatching { PleosNavigationController(this) }.getOrNull()
+
+        speaker = PleosSpeaker(this)
+        levelVoice = LevelVoice(speaker, lifecycleScope)
+
+        settings = InterventionSettingsStore.load(this)
+        manager = InterventionManager(
+            scope = lifecycleScope,
+            voiceOut = PleosVoiceOutput(speaker),   // AndroidTts 는 Pleos 에뮬레이터에서 소리가 안 나서 교체
+            realInput = AndroidStt(this),
+            manualInput = ManualVoiceInput(),
+            realClimate = PleosClimateController(vehicle.getHVAC()),
+            simClimate = SimClimateController(),
+            settings = { settings },
+            // 3단계: 쉼터 데이터 · 위치 · 실제 내비 (창문은 API 확인 전까지 시뮬레이션)
+            restRepo = RestRepository(this),
+            realLocation = AndroidLocationSource(this),
+            realNavigation = navi
+        )
+
+        // 퀴즈 결과 → 감지 엔진의 대화 반응 점수(s_talk)
+        lifecycleScope.launch {
+            manager.events.collect { e ->
+                if (e is InterventionEvent.QuizFinished && useDetection) {
+                    val engine = detection?.engine ?: return@collect
+                    e.results.forEach { r ->
+                        engine.onTalkResult(answered = !r.noAnswer, correct = r.correct, responseMs = r.responseMs)
                     }
                 }
             }
         }
+
+        startDetection()
+        val missing = CAR_PERMISSIONS.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        if (!useSimulation && missing.isNotEmpty()) askPermissions.launch(missing.toTypedArray())
+
+        setContent {
+            Motor_rookieTheme {
+                val d = detection
+                val live = d?.fatigue?.collectAsState()?.value
+                // 처음 설정 → 음성 테스트 → 주행 메인
+                GyeolApp(
+                    manager = manager,
+                    settings = settings,
+                    onSettingsChange = {
+                        settings = it
+                        InterventionSettingsStore.save(this, it)
+                    },
+                    detection = DetectionLink(
+                        live = live,
+                        useDetection = useDetection,
+                        onUseDetectionChange = { useDetection = it },
+                        feedScore = { feedScore(it) },
+                        onRestart = { startDetection() },
+                    ),
+                )
+            }
+        }
     }
 
-    /** 감지 모듈을 (다시) 만들고 시작 */
+    /** 감지 모듈을 (다시) 만들고, 점수가 바뀔 때마다 개입 매니저에 넣는다 */
     private fun startDetection() {
-        detection.value?.stop()
+        bridgeJob?.cancel()
+        detection?.stop()
         val source = VehicleSources.create(
             context = this,
             scope = lifecycleScope,
@@ -132,80 +171,52 @@ class MainActivity : ComponentActivity() {
         }
         val module = DetectionModule(source, lifecycleScope, engine)
         module.start()
-        voice.watch(module.fatigue, lifecycleScope)
-        detection.value = module
+        detection = module
+        bridgeJob = lifecycleScope.launch {
+            module.fatigue.collect { s -> if (useDetection) feedScore(s.score) }
+        }
+    }
+
+    /**
+     * 점수를 개입 매니저에 넣는다. 단계가 "오르는" 순간이면 먼저 단계 안내 음성을 줄 세워서
+     * "지금 대화가 필요합니다" → 퀴즈 질문 순서로 들리게 한다.
+     * (오를 때 기준은 InterventionManager 와 같은 40/60/75 + 민감도. 내려갈 때는 안내 없음)
+     */
+    private fun feedScore(score: Int) {
+        val off = settings.sensitivity.offset
+        val target = when {
+            score >= InterventionManager.REST_THRESHOLD + off -> Stage.REST
+            score >= InterventionManager.CLIMATE_THRESHOLD + off -> Stage.CLIMATE
+            score >= InterventionManager.TALK_THRESHOLD + off -> Stage.TALK
+            else -> Stage.OBSERVE
+        }
+        if (target.ordinal > manager.ui.value.stage.ordinal) levelVoice.announce(target.toLevel())
+        manager.onFatigueScore(score)
+    }
+
+    private fun Stage.toLevel(): FatigueLevel = when (this) {
+        Stage.OBSERVE -> FatigueLevel.NORMAL
+        Stage.TALK -> FatigueLevel.TALK
+        Stage.CLIMATE -> FatigueLevel.ENVIRONMENT
+        Stage.REST -> FatigueLevel.REST
     }
 
     override fun onDestroy() {
-        detection.value?.stop()
-        voice.release()
+        bridgeJob?.cancel()
+        detection?.stop()
+        levelVoice.stop()
+        manager.shutdown()
+        speaker.release()
+        navi?.release()
+        vehicle.release()
         super.onDestroy()
     }
 
     private companion object {
+        const val TAG = "MAIN"
         val CAR_PERMISSIONS = listOf(
             "android.car.permission.CAR_SPEED",   // 속도 (안드로이드 차량 표준 API)
             "pleos.car.permission.CAR_DRIVE",     // 핸들·기어 (Pleos SDK)
         )
     }
-}
-
-/**
- * 확인용 화면 (설정 > 시뮬레이션 모드 자리): 디버그 패널 + 테스트 버튼.
- */
-@Composable
-private fun DetectionScreen(
-    detection: DetectionModule,
-    onRestart: () -> Unit,
-    onBack: () -> Unit,
-    onVoiceTest: () -> Unit,
-) {
-    val state = detection.fatigue.collectAsState().value
-    val sensitivity = remember(detection) { mutableStateOf(detection.engine.sensitivity) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onBack) { Text("← 주행 화면으로") }
-            OutlinedButton(onClick = onVoiceTest) { Text("음성 테스트") }
-        }
-
-        FatigueDebugPanel(state = state, modifier = Modifier.fillMaxWidth())
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onRestart) { Text("처음부터 다시") }
-            OutlinedButton(onClick = {
-                detection.engine.onTalkResult(answered = false, correct = false, responseMs = 0)
-            }) { Text("퀴즈 무응답") }
-            OutlinedButton(onClick = {
-                detection.engine.onTalkResult(answered = true, correct = true, responseMs = 1500)
-            }) { Text("퀴즈 정답") }
-        }
-
-        Text("개입 민감도: ${sensitivity.value.label()}")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Sensitivity.entries.forEach { s ->
-                val onClick = {
-                    detection.engine.sensitivity = s
-                    sensitivity.value = s
-                }
-                if (s == sensitivity.value) {
-                    Button(onClick = onClick) { Text(s.label()) }
-                } else {
-                    OutlinedButton(onClick = onClick) { Text(s.label()) }
-                }
-            }
-        }
-    }
-}
-
-private fun Sensitivity.label(): String = when (this) {
-    Sensitivity.LOW -> "낮음 ($talk/$environment/$rest)"
-    Sensitivity.NORMAL -> "보통 ($talk/$environment/$rest)"
-    Sensitivity.HIGH -> "높음 ($talk/$environment/$rest)"
 }

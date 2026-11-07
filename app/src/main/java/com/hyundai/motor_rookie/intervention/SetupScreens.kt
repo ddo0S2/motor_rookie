@@ -71,7 +71,8 @@ private enum class AppScreen { SETUP, VOICE_TEST, MAIN }
 fun GyeolApp(
     manager: InterventionManager,
     settings: InterventionSettings,
-    onSettingsChange: (InterventionSettings) -> Unit
+    onSettingsChange: (InterventionSettings) -> Unit,
+    detection: DetectionLink? = null,          // 1번 파트(감지 모듈) 연결. null 이면 슬라이더로만 동작
 ) {
     var screen by remember { mutableStateOf(AppScreen.SETUP) }   // 앱을 켤 때마다 처음 설정부터
     when (screen) {
@@ -80,7 +81,7 @@ fun GyeolApp(
             onDone = { screen = AppScreen.MAIN }
         )
         AppScreen.VOICE_TEST -> VoiceTestScreen(manager, onBack = { screen = AppScreen.SETUP })
-        AppScreen.MAIN -> InterventionDemoScreen(manager, settings, onSettingsChange)
+        AppScreen.MAIN -> InterventionDemoScreen(manager, settings, onSettingsChange, detection)
     }
 }
 
