@@ -43,6 +43,8 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    useLibrary("android.car")
 }
 
 dependencies {
@@ -66,6 +68,7 @@ dependencies {
 
     implementation("ai.pleos.playground:Vehicle:2.3.2")
     implementation("androidx.compose.material:material-icons-extended")
+    implementation("ai.pleos.playground:TextToSpeech:3.3.1")
 }
 
 configurations.all {
