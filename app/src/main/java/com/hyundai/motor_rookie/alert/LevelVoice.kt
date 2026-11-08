@@ -1,14 +1,9 @@
 package com.hyundai.motor_rookie.alert
 
-import ai.pleos.playground.tts.TextToSpeech
-import ai.pleos.playground.tts.constant.ErrorType
-import ai.pleos.playground.tts.constant.Mode
-import ai.pleos.playground.tts.listener.EventListener
-import android.content.Context
-import android.util.Log
 import com.hyundai.motor_rookie.fatigue.FatigueLevel
 import com.hyundai.motor_rookie.fatigue.FatigueState
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -21,27 +16,16 @@ import kotlinx.coroutines.launch
  *   → 휴식        : "지금 휴식이 필요합니다"
  *
  * - 내려갈 때(예: 환경 → 대화)는 말하지 않는다. 같은 단계에 머무는 동안에도 반복하지 않는다.
- * - Pleos TextToSpeech SDK 를 쓴다. (Pleos 에뮬레이터에는 안드로이드 기본 TTS 엔진이 연결되지 않음)
- *   ON_DEVICE 모드 = 차 안에서 바로 음성을 만듦, 인터넷 필요 없음.
- * - 2·3번 팀원이 실제 대화·환기·휴식 안내를 붙이면, 이 안내 음성은 그 앞에 나오는 "예고" 역할.
+ * - 소리는 PleosSpeaker(앱 전체 공용 스피커)로 낸다. 퀴즈 음성과 겹치지 않고 차례로 나온다.
+ * - 2번 파트(대화·공조)와 합친 뒤에는 MainActivity 가 단계가 오르기 직전에 announce() 를 불러
+ *   이 안내가 퀴즈보다 먼저 나오게 한다.
  */
-class LevelVoice(context: Context) {
-
-    private val tts = TextToSpeech(context.applicationContext, Mode.ON_DEVICE)
+class LevelVoice(
+    private val speaker: PleosSpeaker,
+    private val scope: CoroutineScope,
+) {
     private var lastLevel = FatigueLevel.NORMAL
     private var job: Job? = null
-
-    init {
-        tts.initialize()
-        tts.addEventListener(object : EventListener {
-            override fun onReady() { Log.d(TAG, "TTS 준비") }
-            override fun onStart() { Log.d(TAG, "읽기 시작") }
-            override fun onDone() { Log.d(TAG, "읽기 끝") }
-            override fun onStop() {}
-            override fun onError(p0: ErrorType) { Log.e(TAG, "TTS 오류: $p0") }
-            override fun onUpdatedRms(p0: Double) {}
-        })
-    }
 
     /** 문장은 여기만 고치면 된다 */
     fun message(level: FatigueLevel): String? = when (level) {
@@ -51,33 +35,30 @@ class LevelVoice(context: Context) {
         FatigueLevel.REST -> "지금 휴식이 필요합니다"
     }
 
-    /** 감지 모듈의 피로 상태를 지켜보다가 단계가 올라가면 말한다 */
-    fun watch(fatigue: StateFlow<FatigueState>, scope: CoroutineScope) {
+    /** 단계가 이 값으로 올라간다고 알려 줄 때 (바로 줄을 서서 다른 음성보다 먼저 읽힌다) */
+    fun announce(level: FatigueLevel) {
+        message(level)?.let { speakFirst(it) }
+    }
+
+    /** (합치기 전 방식) 감지 모듈의 단계를 직접 지켜보다가 올라가면 말한다 */
+    fun watch(fatigue: StateFlow<FatigueState>) {
         job?.cancel()
         lastLevel = fatigue.value.level
         job = scope.launch {
-            fatigue.collect { onLevel(it.level) }
+            fatigue.collect { s ->
+                if (s.level.ordinal > lastLevel.ordinal) announce(s.level)
+                lastLevel = s.level
+            }
         }
     }
 
-    private fun onLevel(level: FatigueLevel) {
-        if (level.ordinal > lastLevel.ordinal) {
-            message(level)?.let { speak(it) }
-        }
-        lastLevel = level
+    /** 문장을 바로 읽는다 (설정의 "음성 테스트" 버튼도 이걸 부름) */
+    fun speak(text: String) = speakFirst(text)
+
+    // UNDISPATCHED: 지금 바로 스피커 줄에 서게 해서, 바로 뒤에 시작되는 퀴즈 음성보다 먼저 읽힌다
+    private fun speakFirst(text: String) {
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { speaker.speak(text) }
     }
 
-    /** 문장을 바로 읽는다 (확인용 화면의 "음성 테스트" 버튼도 이걸 부름) */
-    fun speak(text: String) {
-        Log.d(TAG, "말하기: $text")
-        runCatching { tts.speak(text, true) }
-            .onFailure { Log.e(TAG, "speak 실패", it) }
-    }
-
-    fun release() {
-        job?.cancel()
-        runCatching { tts.release() }
-    }
-
-    private companion object { const val TAG = "LevelVoice" }
+    fun stop() { job?.cancel() }
 }

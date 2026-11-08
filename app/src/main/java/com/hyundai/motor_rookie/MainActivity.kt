@@ -1,211 +1,312 @@
 package com.hyundai.motor_rookie
 
-import android.content.pm.PackageManager
+import ai.pleos.playground.vehicle.Vehicle
 import android.os.Bundle
 import android.util.Log
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.activity.viewModels
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import com.hyundai.motor_rookie.alert.LevelVoice
+import com.hyundai.motor_rookie.alert.PleosSpeaker
 import com.hyundai.motor_rookie.fatigue.DetectionModule
 import com.hyundai.motor_rookie.fatigue.FatigueConfig
-import com.hyundai.motor_rookie.fatigue.FatigueDebugPanel
 import com.hyundai.motor_rookie.fatigue.FatigueEngine
-import com.hyundai.motor_rookie.fatigue.Sensitivity
-import com.hyundai.motor_rookie.ui.main.MainScreen
+import com.hyundai.motor_rookie.fatigue.FatigueLevel
+import com.hyundai.motor_rookie.intervention.AndroidLocationSource
+import com.hyundai.motor_rookie.intervention.AndroidStt
+import com.hyundai.motor_rookie.intervention.DetectionLink
+import com.hyundai.motor_rookie.intervention.GyeolApp
+import com.hyundai.motor_rookie.intervention.InterventionEvent
+import com.hyundai.motor_rookie.intervention.InterventionManager
+import com.hyundai.motor_rookie.intervention.InterventionSettings
+import com.hyundai.motor_rookie.intervention.InterventionSettingsStore
+import com.hyundai.motor_rookie.intervention.ManualVoiceInput
+import com.hyundai.motor_rookie.intervention.PleosClimateController
+import com.hyundai.motor_rookie.intervention.PleosNavigationController
+import com.hyundai.motor_rookie.intervention.PleosVoiceOutput
+import com.hyundai.motor_rookie.intervention.RestRepository
+import com.hyundai.motor_rookie.intervention.SimClimateController
+import com.hyundai.motor_rookie.intervention.Stage
+import com.hyundai.motor_rookie.ui.PowerNapApp
+import com.hyundai.motor_rookie.ui.PowerNapViewModel
+import com.hyundai.motor_rookie.ui.Screen as NapScreen
 import com.hyundai.motor_rookie.ui.theme.Motor_rookieTheme
+import com.hyundai.motor_rookie.vehicle.GearMonitor
+import com.hyundai.motor_rookie.vehicle.ScenarioDataSource
 import com.hyundai.motor_rookie.vehicle.VehicleSources
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 /**
- * 앱 시작 화면.
- * - 기본: Stitch 디자인의 주행 메인 화면 (MainScreen)
- * - [설정] 버튼: 시뮬레이션·민감도 확인 화면 (디버그 패널)
+ * 앱 시작점. 1번(감지), 2·3번(대화·공조·창문·쉼터), 4·5번(휴식·파워냅) 파트를 여기서 잇는다.
+ *
+ *  화면:  처음 설정 → 음성 테스트 → 주행 메인   (GyeolApp)
+ *         + 파워냅 화면(PowerNapApp)이 필요할 때만 맨 위에 덮어서 보임
+ *  흐름:  차량 데이터 → DetectionModule(졸음 점수) → feedScore()
+ *           → 단계가 오르면 "지금 ○○이 필요합니다" 안내(LevelVoice)
+ *           → InterventionManager 가 퀴즈 / 공조 / 창문·쉼터 안내를 저절로 시작
+ *         휴식 단계에서 쉼터에 도착해 P단 → 저장해 둔 환경으로 파워냅 저절로 시작
+ *           → 알람 → 재출발 퀴즈 통과 → 감지 엔진 onRestTaken() (점수·운전 시간 초기화)
+ *         퀴즈 결과 → 감지 엔진 onTalkResult() → 대화 반응 점수(s_talk)에 반영
  */
 class MainActivity : ComponentActivity() {
 
-    // ───── 여기 3개만 바꿔 가며 확인 ─────
-    /** true = CSV 시연 데이터 재생, false = 실제 차량 SDK (PleosVehicleDataSource 의 TODO 를 채운 뒤) */
-    private val useSimulation = false
-    /** 재생할 데이터: "sim/drowsy_drive.csv"(졸음 운전) 또는 "sim/normal_drive.csv"(정상 운전) */
+    // ───── 감지 모듈 스위치 (1번 파트) ─────
+    /**
+     * 졸음 점수를 만드는 데이터
+     *  SCENARIO : 테스트 모드. 시뮬레이션 패널에서 고른 운전 상태(정상/조금/많이/아주 졸림)로 핸들·속도를 만들어 냄.
+     *             기어는 Virtual Console, 퀴즈 중에는 시간 멈춤. 단계별 흐름 확인·시연용 (추천)
+     *  CSV      : 녹화된 2시간 34분 주행을 그대로 재생 (단계가 혼자 쭉 진행됨)
+     *  LIVE     : 에뮬레이터/실제 차 값 그대로 (Virtual Console 속도·핸들·기어)
+     */
+    private val dataMode = DataMode.SCENARIO
+    /** 테스트 모드 배속. 5 = 1초에 5초 분량 (평소 운전 학습 3분 → 실제 36초) */
+    private val scenarioSpeed = 5.0
+    /** CSV 모드: 재생할 데이터와 재생 속도 (60 = 약 2분 30초, 20 = 약 8분) */
     private val simFile = "sim/drowsy_drive.csv"
-    /** 재생 속도. 60 = 약 2분 30초, 20 = 약 8분 */
     private val speedFactor = 60.0
-    /** true = 에뮬레이터 실시간 테스트용으로 시간을 줄임 (기준선 3분, 20분이면 시간 점수 최대). 제출 전 false! */
-    private val shortTest = true
+    /** LIVE 모드: true = 시간을 줄임 (기준선 3분, 20분이면 시간 점수 최대). 제출 전 false! */
+    private val shortTest = false
     // ────────────────────────────────────
 
-    /**
-     * 차량 권한(속도 CAR_SPEED, 핸들·기어 CAR_DRIVE)을 묻는 창. 허용하면 감지를 다시 시작한다.
-     * 주의: 이 창은 시스템 화면이라 D단에서는 막힌다 → P단에서 허용하거나 adb pm grant 로 허용.
-     */
-    private val askPermissions =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
-            Log.d("MAIN", "권한 결과: $result")
-            if (result.values.all { it }) startDetection()
-        }
+    private enum class DataMode { SCENARIO, CSV, LIVE }
 
-    /** 단계가 올라갈 때 "지금 ○○이 필요합니다" 음성 안내 */
-    private val voice by lazy { LevelVoice(this) }
+    /** 테스트 모드의 데이터 소스 (시뮬레이션 패널 버튼이 운전 상태를 바꾼다) */
+    private var scenario by mutableStateOf<ScenarioDataSource?>(null)
 
-    /** 감지 모듈. "처음부터 다시"를 누르면 새로 만든다. */
-    private val detection = mutableStateOf<DetectionModule?>(null)
+    private lateinit var vehicle: Vehicle
+    private lateinit var manager: InterventionManager
+    private var navi: PleosNavigationController? = null
+    private var settings by mutableStateOf(InterventionSettings())
 
-    /** 지금 보이는 화면: false = 주행 메인, true = 확인용(디버그) 화면 */
-    private val showDebug = mutableStateOf(false)
+    /** 앱 전체 공용 음성 (Pleos TTS). 단계 안내와 퀴즈가 같이 쓴다. */
+    private lateinit var speaker: PleosSpeaker
+    private lateinit var levelVoice: LevelVoice
+
+    /** 감지 모듈. "감지 처음부터 다시"를 누르면 새로 만든다. */
+    private var detection by mutableStateOf<DetectionModule?>(null)
+    /** true = 졸음 지수를 감지 모듈에서 받음, false = 시뮬레이션 패널 슬라이더 */
+    private var useDetection by mutableStateOf(true)
+    private var bridgeJob: Job? = null
+
+    /** 4·5번 파트: 파워냅 (P단 감지, 시트·조명·공조, 알람, 재출발 퀴즈) */
+    private val napVm: PowerNapViewModel by viewModels()
+    /** 파워냅 환경 저장 화면을 연 상태인지 (처음 설정 / 시뮬레이션 패널에서 열기) */
+    private var napSettingsOpen by mutableStateOf(false)
+    /** 마지막으로 휴식 단계였던 시각 (파워냅 자동 시작 판단용) */
+    private var lastRestAt = -REST_GRACE_MS
+
+    // 권한은 처음 설정 화면의 [허용] 버튼에서 한 번에 묻는다 (CAR_SPEED, CAR_DRIVE, 마이크, 위치).
+    // D단에서는 권한 창이 막히므로, 그때는 adb pm grant 로 허용.
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        startDetection()
-        val missing = CAR_PERMISSIONS.filter {
-            checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
-        }
-        if (!useSimulation && missing.isNotEmpty()) {
-            askPermissions.launch(missing.toTypedArray())
-        }
+        // 파워냅 중 화면이 꺼져 타이머 표시가 멈추지 않도록
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // enableEdgeToEdge()  ← 하단 Pleos 독(공조 바) 뒤로 화면이 숨어서 끔
 
-        setContent {
-            Motor_rookieTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background,
-                ) {
-                    val d = detection.value
-                    if (d == null) {
-                        // 감지 모듈 준비 전 (아주 잠깐)
-                    } else if (showDebug.value) {
-                        DetectionScreen(
-                            detection = d,
-                            onRestart = { startDetection() },
-                            onBack = { showDebug.value = false },
-                            onVoiceTest = { voice.speak("지금 휴식이 필요합니다") },
-                        )
-                    } else {
-                        MainScreen(
-                            state = d.fatigue.collectAsState().value,
-                            onTalk = { Log.d("MAIN", "말 걸어줘 → TODO: 2번 팀원 대화 시작 연결") },
-                            onFindRest = { Log.d("MAIN", "쉼터 찾기 → TODO: 3번 팀원 쉼터 안내 연결") },
-                            onSettings = { showDebug.value = true },
-                            // 원래는 정차 중에만 열려야 하지만(Pleos 주행 규제),
-                            // 시연·개발 중에는 시뮬레이션 화면으로 가야 해서 항상 열어 둔다.
-                            settingsEnabled = true,
-                        )
+        vehicle = Vehicle(this)
+        vehicle.initialize()
+
+        // 실제 Pleos 내비 (연결 실패해도 앱은 가짜 내비로 계속 동작)
+        navi = runCatching { PleosNavigationController(this) }.getOrNull()
+
+        speaker = PleosSpeaker(this)
+        levelVoice = LevelVoice(speaker, lifecycleScope)
+
+        settings = InterventionSettingsStore.load(this)
+        manager = InterventionManager(
+            scope = lifecycleScope,
+            voiceOut = PleosVoiceOutput(speaker),   // AndroidTts 는 Pleos 에뮬레이터에서 소리가 안 나서 교체
+            realInput = AndroidStt(this),
+            manualInput = ManualVoiceInput(),
+            realClimate = PleosClimateController(vehicle.getHVAC()),
+            simClimate = SimClimateController(),
+            settings = { settings },
+            // 3단계: 쉼터 데이터 · 위치 · 실제 내비 (창문은 API 확인 전까지 시뮬레이션)
+            restRepo = RestRepository(this),
+            realLocation = AndroidLocationSource(this),
+            realNavigation = navi
+        )
+
+        // 퀴즈 결과 → 감지 엔진의 대화 반응 점수(s_talk)
+        lifecycleScope.launch {
+            manager.events.collect { e ->
+                if (e is InterventionEvent.QuizFinished && useDetection) {
+                    val engine = detection?.engine ?: return@collect
+                    e.results.forEach { r ->
+                        engine.onTalkResult(answered = !r.noAnswer, correct = r.correct, responseMs = r.responseMs)
                     }
                 }
             }
         }
-    }
 
-    /** 감지 모듈을 (다시) 만들고 시작 */
-    private fun startDetection() {
-        detection.value?.stop()
-        val source = VehicleSources.create(
-            context = this,
-            scope = lifecycleScope,
-            simulation = useSimulation,
-            simFile = simFile,
-            speedFactor = speedFactor,
-        )
-        val engine = if (shortTest) {
-            FatigueEngine(FatigueConfig(baselineSec = 180, fullFatigueSec = 1200.0))
-        } else {
-            FatigueEngine()
+        // 파워냅은 졸음 단계가 '휴식'일 때 P단으로 바꾸면 저절로 시작 (평소 신호 대기 P단에서는 안 켜짐)
+        // 쉼터까지 가는 동안(또는 P로 바꾼 직후) 점수가 조금 내려가 휴식 단계를 벗어날 수 있어서,
+        // "지금 휴식 단계"이거나 "최근 10분 안에 휴식 단계였으면" 허용한다.
+        napVm.autoStartAllowed = {
+            manager.ui.value.stage == Stage.REST ||
+                android.os.SystemClock.elapsedRealtime() - lastRestAt < REST_GRACE_MS
         }
-        val module = DetectionModule(source, lifecycleScope, engine)
-        module.start()
-        voice.watch(module.fatigue, lifecycleScope)
-        detection.value = module
-    }
-
-    override fun onDestroy() {
-        detection.value?.stop()
-        voice.release()
-        super.onDestroy()
-    }
-
-    private companion object {
-        val CAR_PERMISSIONS = listOf(
-            "android.car.permission.CAR_SPEED",   // 속도 (안드로이드 차량 표준 API)
-            "pleos.car.permission.CAR_DRIVE",     // 핸들·기어 (Pleos SDK)
-        )
-    }
-}
-
-/**
- * 확인용 화면 (설정 > 시뮬레이션 모드 자리): 디버그 패널 + 테스트 버튼.
- */
-@Composable
-private fun DetectionScreen(
-    detection: DetectionModule,
-    onRestart: () -> Unit,
-    onBack: () -> Unit,
-    onVoiceTest: () -> Unit,
-) {
-    val state = detection.fatigue.collectAsState().value
-    val sensitivity = remember(detection) { mutableStateOf(detection.engine.sensitivity) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onBack) { Text("← 주행 화면으로") }
-            OutlinedButton(onClick = onVoiceTest) { Text("음성 테스트") }
+        lifecycleScope.launch {
+            var prev = Stage.OBSERVE
+            manager.ui.map { it.stage }.distinctUntilChanged().collect { st ->
+                // 휴식 단계에 들어갈 때와 벗어날 때 시각을 적어 둔다 (벗어난 뒤 10분까지 허용)
+                if (st == Stage.REST || prev == Stage.REST) lastRestAt = android.os.SystemClock.elapsedRealtime()
+                prev = st
+            }
         }
-
-        FatigueDebugPanel(state = state, modifier = Modifier.fillMaxWidth())
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onRestart) { Text("처음부터 다시") }
-            OutlinedButton(onClick = {
-                detection.engine.onTalkResult(answered = false, correct = false, responseMs = 0)
-            }) { Text("퀴즈 무응답") }
-            OutlinedButton(onClick = {
-                detection.engine.onTalkResult(answered = true, correct = true, responseMs = 1500)
-            }) { Text("퀴즈 정답") }
-        }
-
-        Text("개입 민감도: ${sensitivity.value.label()}")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Sensitivity.entries.forEach { s ->
-                val onClick = {
-                    detection.engine.sensitivity = s
-                    sensitivity.value = s
+        // 휴식 단계에서 P로 바꿨는데 파워냅 환경이 저장돼 있지 않으면 → 안내하고 저장 화면을 연다
+        lifecycleScope.launch {
+            napVm.state.map { it.isParked }.distinctUntilChanged().collect { parked ->
+                val st = napVm.state.value
+                if (parked && st.saved == null && napVm.autoStartAllowed()) {
+                    levelVoice.speak("파워냅 환경이 저장돼 있지 않아요. 저장하면 바로 쉴 수 있어요.")
+                    napSettingsOpen = true
                 }
-                if (s == sensitivity.value) {
-                    Button(onClick = onClick) { Text(s.label()) }
-                } else {
-                    OutlinedButton(onClick = onClick) { Text(s.label()) }
+            }
+        }
+        lifecycleScope.launch {
+            napVm.state.map { it.screen }.distinctUntilChanged().collect { screen ->
+                val napping = screen !in setOf(NapScreen.SETTINGS, NapScreen.ALARM_SOUND, NapScreen.PASSED)
+                manager.paused = napping            // 파워냅 중에는 퀴즈·공조·쉼터 안내를 멈춤
+                if (screen == NapScreen.PASSED) {
+                    // 재출발 퀴즈 통과 = 휴식 완료 → 졸음 점수·운전 시간 초기화
+                    detection?.engine?.onRestTaken()
+                    // 테스트 모드: 푹 쉬었으니 운전 상태도 '정상'으로 (안 바꾸면 '아주 졸림'이라 바로 다시 올라감)
+                    scenario?.setLevel(0)
+                    Log.d(TAG, "파워냅 완료 → onRestTaken()")
+                }
+                if (screen == NapScreen.SETTINGS) manager.paused = false
+            }
+        }
+
+        startDetection()
+
+        setContent {
+            Motor_rookieTheme {
+                val d = detection
+                val live = d?.fatigue?.collectAsState()?.value
+                val nap by napVm.state.collectAsState()
+                val sc = scenario
+                val scLevel = sc?.level?.collectAsState()?.value
+                val napActive = nap.screen != NapScreen.SETTINGS && nap.screen != NapScreen.ALARM_SOUND
+                Box(Modifier.fillMaxSize()) {
+                // 처음 설정 → 음성 테스트 → 주행 메인
+                GyeolApp(
+                    manager = manager,
+                    settings = settings,
+                    onSettingsChange = {
+                        settings = it
+                        InterventionSettingsStore.save(this@MainActivity, it)
+                    },
+                    detection = DetectionLink(
+                        live = live,
+                        useDetection = useDetection,
+                        onUseDetectionChange = { useDetection = it },
+                        feedScore = { feedScore(it) },
+                        onRestart = { startDetection() },
+                        onOpenPowerNap = { napSettingsOpen = true },
+                        scenarioLevel = scLevel,
+                        onScenarioLevel = sc?.let { src -> { lv: Int -> src.setLevel(lv) } },
+                    ),
+                )
+                // 파워냅이 진행 중이거나 환경 저장 화면을 열었을 때만 맨 위에 덮는다.
+                // (Surface 가 아래 화면으로 터치가 새지 않게 막아 준다. 아래 화면은 그대로 살아 있음)
+                if (napActive || napSettingsOpen) {
+                    Surface(Modifier.fillMaxSize()) {
+                        PowerNapApp(onExit = { napSettingsOpen = false }, vm = napVm)
+                    }
+                }
                 }
             }
         }
     }
-}
 
-private fun Sensitivity.label(): String = when (this) {
-    Sensitivity.LOW -> "낮음 ($talk/$environment/$rest)"
-    Sensitivity.NORMAL -> "보통 ($talk/$environment/$rest)"
-    Sensitivity.HIGH -> "높음 ($talk/$environment/$rest)"
+    /** 감지 모듈을 (다시) 만들고, 점수가 바뀔 때마다 개입 매니저에 넣는다 */
+    private fun startDetection() {
+        bridgeJob?.cancel()
+        detection?.stop()
+        val source = when (dataMode) {
+            DataMode.SCENARIO -> ScenarioDataSource(
+                scope = lifecycleScope,
+                speedFactor = scenarioSpeed,
+                startHour = 23,
+                parkedFlow = GearMonitor(this).parkedFlow(),   // 기어는 Virtual Console 을 따름
+            )
+            else -> VehicleSources.create(
+                context = this,
+                scope = lifecycleScope,
+                simulation = dataMode == DataMode.CSV,
+                simFile = simFile,
+                speedFactor = speedFactor,
+            )
+        }
+        scenario = source as? ScenarioDataSource
+        val engine = when {
+            // 테스트 모드: 평소 운전 학습만 3분으로 줄임 (나머지 계산은 실제와 같음)
+            dataMode == DataMode.SCENARIO -> FatigueEngine(FatigueConfig(baselineSec = 180))
+            shortTest -> FatigueEngine(FatigueConfig(baselineSec = 180, fullFatigueSec = 1200.0))
+            else -> FatigueEngine()
+        }
+        val module = DetectionModule(source, lifecycleScope, engine)
+        module.start()
+        detection = module
+        bridgeJob = lifecycleScope.launch {
+            module.fatigue.collect { s -> if (useDetection && !manager.paused) feedScore(s.score) }
+        }
+    }
+
+    /**
+     * 점수를 개입 매니저에 넣는다. 단계가 "오르는" 순간이면 먼저 단계 안내 음성을 줄 세워서
+     * "지금 대화가 필요합니다" → 퀴즈 질문 순서로 들리게 한다.
+     * (오를 때 기준은 InterventionManager 와 같은 40/60/75 + 민감도. 내려갈 때는 안내 없음)
+     */
+    private fun feedScore(score: Int) {
+        val off = settings.sensitivity.offset
+        val target = when {
+            score >= InterventionManager.REST_THRESHOLD + off -> Stage.REST
+            score >= InterventionManager.CLIMATE_THRESHOLD + off -> Stage.CLIMATE
+            score >= InterventionManager.TALK_THRESHOLD + off -> Stage.TALK
+            else -> Stage.OBSERVE
+        }
+        if (target.ordinal > manager.ui.value.stage.ordinal) levelVoice.announce(target.toLevel())
+        manager.onFatigueScore(score)
+    }
+
+    private fun Stage.toLevel(): FatigueLevel = when (this) {
+        Stage.OBSERVE -> FatigueLevel.NORMAL
+        Stage.TALK -> FatigueLevel.TALK
+        Stage.CLIMATE -> FatigueLevel.ENVIRONMENT
+        Stage.REST -> FatigueLevel.REST
+    }
+
+    override fun onDestroy() {
+        bridgeJob?.cancel()
+        detection?.stop()
+        levelVoice.stop()
+        manager.shutdown()
+        speaker.release()
+        navi?.release()
+        vehicle.release()
+        super.onDestroy()
+    }
+
+    private companion object {
+        const val TAG = "MAIN"
+        /** 휴식 단계를 벗어난 뒤에도 이 시간 안에 P로 바꾸면 파워냅을 시작한다 */
+        const val REST_GRACE_MS = 10 * 60_000L
+    }
 }
