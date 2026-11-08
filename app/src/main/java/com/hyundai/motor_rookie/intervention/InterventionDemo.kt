@@ -253,7 +253,26 @@ private fun SimPanel(
                     color = GyeolColors.Sub, fontSize = gsp(22)
                 )
             }
-            GyeolButton("감지 처음부터 다시", null, medium = true) { detection.onRestart() }
+            // 테스트 모드: 운전 상태를 골라서 감지 점수를 움직인다 (기어는 Virtual Console 을 따름)
+            val lv = detection.scenarioLevel
+            val setLv = detection.onScenarioLevel
+            if (lv != null && setLv != null) {
+                Text("운전 상태 (테스트 모드 · D단에서 적용)", color = GyeolColors.Text, fontSize = gsp(24),
+                    fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(gdp(12))) {
+                    listOf("정상", "조금 졸림", "많이 졸림", "아주 졸림").forEachIndexed { i, name ->
+                        GyeolButton(name, null, Modifier.weight(1f),
+                            container = if (i == lv) GyeolColors.Blue else GyeolColors.Raised,
+                            medium = true) { setLv(i) }
+                    }
+                }
+                Text("정상 → 괜찮음 유지 · 조금 졸림 → 대화 · 많이 졸림 → 환경 · 아주 졸림 → 휴식 (1~2분 걸려요)",
+                    color = GyeolColors.Sub, fontSize = gsp(18))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(gdp(12))) {
+                GyeolButton("감지 처음부터 다시", null, medium = true) { detection.onRestart() }
+                detection.onOpenPowerNap?.let { open -> GyeolButton("파워냅 설정", null, medium = true) { open() } }
+            }
         }
 
         // 졸음 지수

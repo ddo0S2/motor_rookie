@@ -78,7 +78,11 @@ fun GyeolApp(
     when (screen) {
         AppScreen.SETUP -> SetupScreen(
             onVoiceTest = { screen = AppScreen.VOICE_TEST },
-            onDone = { screen = AppScreen.MAIN }
+            onDone = {
+                screen = AppScreen.MAIN
+                detection?.onRestart?.invoke()   // 주행 메인에 들어갈 때 감지 시작 (방금 허용한 권한 반영, CSV도 처음부터)
+            },
+            onPowerNap = detection?.onOpenPowerNap
         )
         AppScreen.VOICE_TEST -> VoiceTestScreen(manager, onBack = { screen = AppScreen.SETUP })
         AppScreen.MAIN -> InterventionDemoScreen(manager, settings, onSettingsChange, detection)
@@ -105,17 +109,20 @@ object EmergencyContactStore {
 // ───────────────── 1. 처음 설정 화면 ─────────────────
 
 private val NEEDED_PERMISSIONS = arrayOf(
+    "android.car.permission.CAR_SPEED",   // 감지: 속도
+    "pleos.car.permission.CAR_DRIVE",     // 감지: 핸들·기어
     Manifest.permission.RECORD_AUDIO,
     Manifest.permission.ACCESS_FINE_LOCATION,
     Manifest.permission.ACCESS_COARSE_LOCATION
 )
 
 private fun permissionsGranted(context: Context) = listOf(
-    Manifest.permission.RECORD_AUDIO, Manifest.permission.ACCESS_FINE_LOCATION
+    Manifest.permission.RECORD_AUDIO, Manifest.permission.ACCESS_FINE_LOCATION,
+    "android.car.permission.CAR_SPEED", "pleos.car.permission.CAR_DRIVE"
 ).all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
 
 @Composable
-fun SetupScreen(onVoiceTest: () -> Unit, onDone: () -> Unit) {
+fun SetupScreen(onVoiceTest: () -> Unit, onDone: () -> Unit, onPowerNap: (() -> Unit)? = null) {
     val context = LocalContext.current
     var granted by remember { mutableStateOf(permissionsGranted(context)) }
     var contact by remember { mutableStateOf(EmergencyContactStore.load(context)) }
@@ -143,7 +150,7 @@ fun SetupScreen(onVoiceTest: () -> Unit, onDone: () -> Unit) {
                     Text("곁과 함께 시작해요", color = GyeolColors.Text, fontSize = gsp(48), lineHeight = gsp(58),
                         fontWeight = FontWeight.Bold, letterSpacing = Tight)
                     Spacer(Modifier.height(gdp(16)))
-                    Text("안전한 운전을 위해\n3가지만 준비할게요", color = GyeolColors.Sub, fontSize = gsp(24),
+                    Text(if (onPowerNap != null) "안전한 운전을 위해\n4가지만 준비할게요" else "안전한 운전을 위해\n3가지만 준비할게요", color = GyeolColors.Sub, fontSize = gsp(24),
                         lineHeight = gsp(35))
                 }
                 Spacer(Modifier.width(gdp(32)))
@@ -177,6 +184,17 @@ fun SetupScreen(onVoiceTest: () -> Unit, onDone: () -> Unit) {
                         buttonIcon = null,
                         onClick = onVoiceTest
                     )
+                    if (onPowerNap != null) {
+                        SetupRow(
+                            icon = Icons.Outlined.LocalParking, iconTint = GyeolColors.Text,
+                            title = "파워냅 환경 저장",
+                            sub = "쉼터에서 쉴 때의 시트 · 조명 · 공조",
+                            button = "설정",
+                            buttonColor = GyeolColors.Raised,
+                            buttonIcon = null,
+                            onClick = onPowerNap
+                        )
+                    }
                 }
             }
 

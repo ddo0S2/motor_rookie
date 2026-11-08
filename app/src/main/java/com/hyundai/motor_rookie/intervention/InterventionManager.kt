@@ -27,8 +27,9 @@ import java.util.Locale
  *       events(SharedFlow) - 퀴즈 결과(오답 점수, s_talk), 무응답 3회(비상)
  *
  * 규칙
- *  - F ≥ 40(+민감도) → 1단계: 퀴즈 3문제 (TTS → 시작음 → STT → 판정)
- *  - F ≥ 60(+민감도) → 2단계: 온도 −2℃, 풍량 +1, 대화는 계속
+ *  - F ≥ 40(+민감도) → 1단계: 들어오는 순간 퀴즈 3문제 한 번 (TTS → 시작음 → STT → 판정)
+ *                      → 끝나면 메인 화면. 실제 주행에서만 1단계에 10분 넘게 머물면 한 번 더
+ *  - F ≥ 60(+민감도) → 2단계: 온도 −2℃, 풍량 +1 한 번 (자동 퀴즈 없음, [말 걸어줘]는 언제든 가능)
  *  - F ≥ 75(+민감도) → 3단계: 창문 대각선 2개 조금 열기 + 가까운 졸음쉼터·휴게소 안내 → 경유지 추가
  *  - 올라갈 땐 바로, 내려갈 땐 임계값-10 아래로 일정 시간 유지돼야 내려감 (깜빡임 방지)
  *  - [괜찮아] → 20분 동안 1단계 대화 미루기
@@ -83,11 +84,14 @@ class InterventionManager(
     private val sim get() = settings().simulation
     private val downHoldMs get() = if (sim) 10_000L else 180_000L
     private val snoozeMs get() = if (sim) 60_000L else 20 * 60_000L
-    private fun cooldownMs(stage: Stage) = when {
-        sim -> 15_000L
-        stage == Stage.CLIMATE || stage == Stage.REST -> 2 * 60_000L
-        else -> 5 * 60_000L
-    }
+
+    /**
+     * 1단계(대화)에 계속 머물 때 퀴즈를 다시 내는 간격.
+     * 퀴즈는 "단계에 들어갈 때 한 번"이 기본이고, 1단계에 오래 머물 때만 이 간격으로 한 번 더 묻는다.
+     * null = 다시 묻지 않음 (시뮬레이션: 단계별 흐름을 보기 쉽게)
+     * 2·3단계에서는 자동으로 퀴즈를 내지 않는다 (각 단계의 개입만 실행).
+     */
+    private val talkRepeatMs: Long? get() = if (sim) null else 10 * 60_000L
 
     companion object {
         const val LISTEN_MS = 8_000L
@@ -110,7 +114,22 @@ class InterventionManager(
 
     // ───────────────── 피로 점수 입력 ─────────────────
 
+    /** true 면 점수 판단·개입을 잠깐 멈춘다 (파워냅 중). MainActivity 가 켜고 끈다. */
+    @Volatile var paused: Boolean = false
+        set(value) {
+            val was = field
+            field = value
+            // 파워냅이 시작되면 진행 중이던 퀴즈·쉼터 음성 질문을 끊는다 (파워냅 음성과 겹치지 않게)
+            if (value && !was) {
+                pendingAnnouncement = null
+                quizJob?.cancel()
+                restJob?.cancel()
+                _ui.update { it.copy(restCard = RestCardUi()) }
+            }
+        }
+
     fun onFatigueScore(score: Int) {
+        if (paused) return
         val s = settings()
         val t1 = TALK_THRESHOLD + s.sensitivity.offset
         val t2 = CLIMATE_THRESHOLD + s.sensitivity.offset
@@ -135,7 +154,7 @@ class InterventionManager(
 
         _ui.update { it.copy(score = score, stage = next, status = statusText(score, next)) }
         if (next != cur) onStageChanged(cur, next)
-        maybeStartQuiz(next)
+        else maybeRepeatQuiz(next)
     }
 
     private fun statusText(score: Int, stage: Stage): String = when {
@@ -153,6 +172,8 @@ class InterventionManager(
     private fun onStageChanged(from: Stage, to: Stage) {
         log("단계 변경: ${from.label} → ${to.label}")
         val up = to.ordinal > from.ordinal
+        // 1단계에 "들어오는 순간" 퀴즈 한 번 (괜찮아로 미뤄 둔 동안은 제외)
+        if (up && to == Stage.TALK && now() >= _ui.value.snoozedUntil) startQuiz()
         scope.launch {
             if (up) {
                 // 2단계 이상으로 올라가면 공조 (0→3단계로 바로 뛰어도 공조부터)
@@ -273,13 +294,14 @@ class InterventionManager(
 
     private fun km(d: Double) = "${"%.1f".format(d)}킬로미터"
 
-    private fun maybeStartQuiz(stage: Stage) {
-        if (stage == Stage.OBSERVE) return
+    /** 1단계에 오래 머물 때만 talkRepeatMs 간격으로 한 번 더 묻는다 */
+    private fun maybeRepeatQuiz(stage: Stage) {
+        if (stage != Stage.TALK) return
+        val repeat = talkRepeatMs ?: return
         if (quizJob?.isActive == true) return
-        if (_ui.value.restCard.visible) return          // 쉼터 안내 중에는 퀴즈 쉬기
-        // 1단계는 [괜찮아]로 미룰 수 있지만, 2단계는 "대화는 계속"
-        if (stage == Stage.TALK && now() < _ui.value.snoozedUntil) return
-        if (now() - lastQuizEnd < cooldownMs(stage)) return
+        if (_ui.value.restCard.visible) return
+        if (now() < _ui.value.snoozedUntil) return
+        if (now() - lastQuizEnd < repeat) return
         startQuiz()
     }
 
