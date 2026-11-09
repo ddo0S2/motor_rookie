@@ -25,6 +25,10 @@ import com.hyundai.motor_rookie.fatigue.FatigueLevel
 import com.hyundai.motor_rookie.intervention.AndroidLocationSource
 import com.hyundai.motor_rookie.intervention.AndroidStt
 import com.hyundai.motor_rookie.intervention.DetectionLink
+import com.hyundai.motor_rookie.intervention.EmergencyController
+import com.hyundai.motor_rookie.intervention.EmergencyLayer
+import com.hyundai.motor_rookie.intervention.EmergencyTrigger
+import com.hyundai.motor_rookie.intervention.VehicleEmergencyMonitor
 import com.hyundai.motor_rookie.intervention.GyeolApp
 import com.hyundai.motor_rookie.intervention.InterventionEvent
 import com.hyundai.motor_rookie.intervention.InterventionManager
@@ -89,6 +93,10 @@ class MainActivity : ComponentActivity() {
     private lateinit var vehicle: Vehicle
     private lateinit var manager: InterventionManager
     private var navi: PleosNavigationController? = null
+    /** 비상 모드 (무응답 3회 · 급정거 · 연료 부족 · 행동요령) */
+    private lateinit var emergency: EmergencyController
+    private var emergencyMonitor: VehicleEmergencyMonitor? = null
+    private var napping = false
     private var settings by mutableStateOf(InterventionSettings())
 
     /** 앱 전체 공용 음성 (Pleos TTS). 단계 안내와 퀴즈가 같이 쓴다. */
@@ -122,6 +130,8 @@ class MainActivity : ComponentActivity() {
 
         // 실제 Pleos 내비 (연결 실패해도 앱은 가짜 내비로 계속 동작)
         navi = runCatching { PleosNavigationController(this) }.getOrNull()
+        // 내비에서 길안내가 끝나면 곁으로 돌아올지 (시뮬레이션 패널 스위치)
+        navi?.autoReturn = { settings.naviAutoReturn }
 
         speaker = PleosSpeaker(this)
         levelVoice = LevelVoice(speaker, lifecycleScope)
@@ -141,9 +151,38 @@ class MainActivity : ComponentActivity() {
             realNavigation = navi
         )
 
+        // 비상 모드
+        emergency = EmergencyController(
+            context = this,
+            scope = lifecycleScope,
+            voiceOut = PleosVoiceOutput(speaker),
+            realInput = AndroidStt(this),
+            settings = { settings },
+            navigation = { navi?.takeIf { settings.useRealNavi } ?: manager.simNavigation },
+            simNavigation = manager.simNavigation,
+            simLocation = manager.simLocation,
+            realLocation = AndroidLocationSource(this),
+            restRepo = RestRepository(this),
+            pleosNavi = navi,
+        )
+        // 실제 차량 신호: 급정거 · 연료 부족
+        emergencyMonitor = VehicleEmergencyMonitor(
+            context = this,
+            onHardBrake = { runOnUiThread { emergency.start(EmergencyTrigger.HARD_BRAKE) } },
+            onFuelLow = { km -> runOnUiThread { emergency.fuelLow(km) } },
+        ).also { it.start() }
+        // 비상 모드 중에는 퀴즈·공조·쉼터 안내를 멈춤
+        lifecycleScope.launch {
+            emergency.ui.map { it.active }.distinctUntilChanged().collect { on ->
+                manager.paused = on || napping
+            }
+        }
+
         // 퀴즈 결과 → 감지 엔진의 대화 반응 점수(s_talk)
         lifecycleScope.launch {
             manager.events.collect { e ->
+                // 무응답 3회 연속 → 비상 모드
+                if (e == InterventionEvent.Emergency) emergency.start(EmergencyTrigger.NO_RESPONSE)
                 if (e is InterventionEvent.QuizFinished && useDetection) {
                     val engine = detection?.engine ?: return@collect
                     e.results.forEach { r ->
@@ -181,7 +220,8 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             napVm.state.map { it.screen }.distinctUntilChanged().collect { screen ->
                 val napping = screen !in setOf(NapScreen.SETTINGS, NapScreen.ALARM_SOUND, NapScreen.PASSED)
-                manager.paused = napping            // 파워냅 중에는 퀴즈·공조·쉼터 안내를 멈춤
+                this@MainActivity.napping = napping
+                manager.paused = napping || emergency.active   // 파워냅·비상 모드 중에는 퀴즈·공조·쉼터 안내를 멈춤
                 if (screen == NapScreen.PASSED) {
                     // 재출발 퀴즈 통과 = 휴식 완료 → 졸음 점수·운전 시간 초기화
                     detection?.engine?.onRestTaken()
@@ -189,7 +229,7 @@ class MainActivity : ComponentActivity() {
                     scenario?.setLevel(0)
                     Log.d(TAG, "파워냅 완료 → onRestTaken()")
                 }
-                if (screen == NapScreen.SETTINGS) manager.paused = false
+                if (screen == NapScreen.SETTINGS) { this@MainActivity.napping = false; manager.paused = emergency.active }
             }
         }
 
@@ -222,6 +262,7 @@ class MainActivity : ComponentActivity() {
                         scenarioLevel = scLevel,
                         onScenarioLevel = sc?.let { src -> { lv: Int -> src.setLevel(lv) } },
                     ),
+                    emergency = emergency,
                 )
                 // 파워냅이 진행 중이거나 환경 저장 화면을 열었을 때만 맨 위에 덮는다.
                 // (Surface 가 아래 화면으로 터치가 새지 않게 막아 준다. 아래 화면은 그대로 살아 있음)
@@ -230,6 +271,8 @@ class MainActivity : ComponentActivity() {
                         PowerNapApp(onExit = { napSettingsOpen = false }, vm = napVm)
                     }
                 }
+                // 비상 화면 · 연료 부족 · 행동요령 (맨 위)
+                EmergencyLayer(emergency)
                 }
             }
         }
@@ -300,6 +343,8 @@ class MainActivity : ComponentActivity() {
         manager.shutdown()
         speaker.release()
         navi?.release()
+        emergencyMonitor?.stop()
+        emergency.shutdown()
         vehicle.release()
         super.onDestroy()
     }

@@ -14,7 +14,8 @@ data class InterventionSettings(
     val windowAuto: Boolean = true,          // 창문 자동 열기
     val windowRainOff: Boolean = true,       // 비·눈이 오면 창문 자동 열기 끄기
     val simRaining: Boolean = false,
-    val useRealNavi: Boolean = true,         // [안내 시작] 때 실제 Pleos 내비로 보낼지 (끄면 가짜 내비)         // 시뮬레이션: 비 오는 중 (실차는 와이퍼 상태로 판단)
+    val useRealNavi: Boolean = true,         // [안내 시작] 때 실제 Pleos 내비로 보낼지 (끄면 가짜 내비)
+    val naviAutoReturn: Boolean = true,      // 내비에서 길안내가 끝나면 곁 화면으로 돌아올지
     val sensitivity: Sensitivity = Sensitivity.NORMAL,
     val quizTypes: Set<QuizType> = QuizType.values().toSet(),
     val simulation: Boolean = true
@@ -37,6 +38,7 @@ object InterventionSettingsStore {
             windowAuto = p.getBoolean("window_auto", true),
             windowRainOff = p.getBoolean("window_rain_off", true),
             useRealNavi = p.getBoolean("use_real_navi", true),
+            naviAutoReturn = p.getBoolean("navi_auto_return", true),
             sensitivity = runCatching { Sensitivity.valueOf(p.getString("sensitivity", "NORMAL")!!) }
                 .getOrDefault(Sensitivity.NORMAL),
             quizTypes = types,
@@ -50,6 +52,7 @@ object InterventionSettingsStore {
             .putBoolean("window_auto", s.windowAuto)
             .putBoolean("window_rain_off", s.windowRainOff)
             .putBoolean("use_real_navi", s.useRealNavi)
+            .putBoolean("navi_auto_return", s.naviAutoReturn)
             .putString("sensitivity", s.sensitivity.name)
             .putStringSet("quiz_types", s.quizTypes.map { it.name }.toSet())
             .putBoolean("simulation", s.simulation)

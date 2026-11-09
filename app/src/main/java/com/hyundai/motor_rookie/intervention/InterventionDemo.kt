@@ -49,6 +49,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInput
 import kotlin.math.roundToInt
 
 // ─────────────────────────────────────────────
@@ -63,7 +68,8 @@ fun InterventionDemoScreen(
     manager: InterventionManager,
     settings: InterventionSettings,
     onSettingsChange: (InterventionSettings) -> Unit,
-    detection: DetectionLink? = null
+    detection: DetectionLink? = null,
+    emergency: EmergencyController? = null
 ) {
     val ui by manager.ui.collectAsState()
     // 감지 모듈과 연결돼 있으면 점수는 감지 모듈이 넣는다 (슬라이더는 꺼 둠)
@@ -87,8 +93,7 @@ fun InterventionDemoScreen(
                         feed(score.roundToInt())
                     }
                 }
-                InterventionEvent.Emergency ->
-                    Toast.makeText(context, "무응답 3회 → 비상 모드 (다른 파트)", Toast.LENGTH_SHORT).show()
+                InterventionEvent.Emergency -> {}   // 비상 화면은 MainActivity 의 EmergencyLayer 가 띄움
                 is InterventionEvent.Snoozed -> {}
             }
         }
@@ -98,31 +103,32 @@ fun InterventionDemoScreen(
     val drivingMin = live?.drivingMinutes ?: (((nowMs - startedAt) / 60_000).toInt() + extraMin)
 
     Box(Modifier.fillMaxSize().safeDrawingPadding()) {
-    GyeolScaled(Modifier.background(GyeolColors.Bg)) {
-        DrivingMainScreen(
-            ui = ui,
-            drivingMinutes = drivingMin,
-            onTalk = { manager.talkNow() },
-            onFindRest = { manager.findRestNow() },
-            onSettings = { panelOpen = !panelOpen }
-        )
-
-        if (panelOpen) {
-            SimPanel(
-                manager = manager,
+        GyeolScaled(Modifier.background(GyeolColors.Bg)) {
+            DrivingMainScreen(
                 ui = ui,
-                score = score,
-                onScore = { score = it; feed(it.roundToInt()) },
-                detection = detection,
-                settings = settings,
-                onSettingsChange = onSettingsChange,
-                onAddMinutes = { extraMin = (extraMin + it).coerceAtLeast(0) },
-                onClose = { panelOpen = false },
-                modifier = Modifier.align(Alignment.CenterEnd)
+                drivingMinutes = drivingMin,
+                onTalk = { manager.talkNow() },
+                onFindRest = { manager.findRestNow() },
+                onSettings = { panelOpen = !panelOpen }
             )
+
+            if (panelOpen) {
+                SimPanel(
+                    manager = manager,
+                    ui = ui,
+                    score = score,
+                    onScore = { score = it; feed(it.roundToInt()) },
+                    detection = detection,
+                    settings = settings,
+                    onSettingsChange = onSettingsChange,
+                    onAddMinutes = { extraMin = (extraMin + it).coerceAtLeast(0) },
+                    onClose = { panelOpen = false },
+                    emergency = emergency,
+                    modifier = Modifier.align(Alignment.CenterEnd)
+                )
+            }
         }
-    }
-    InterventionOverlay(manager)
+        InterventionOverlay(manager)
     }
 }
 
@@ -203,6 +209,7 @@ private fun SimPanel(
     onAddMinutes: (Int) -> Unit,
     onClose: () -> Unit,
     detection: DetectionLink? = null,
+    emergency: EmergencyController? = null,
     modifier: Modifier = Modifier
 ) {
     val fromDetection = detection?.useDetection == true
@@ -221,13 +228,32 @@ private fun SimPanel(
     }
     val scoreColor = GyeolColors.forScore(if (fromDetection) ui.score else score.roundToInt())
 
+    val panelScroll = rememberScrollState()
+    val scrollScope = rememberCoroutineScope()
     Column(
         modifier
             .fillMaxHeight()
             .width(gdp(640))
             .background(GyeolColors.Surface, RoundedCornerShape(topStart = gdp(32), bottomStart = gdp(32)))
+            // 터치패드 두 손가락 스크롤·마우스 휠도 확실히 먹게 (에뮬레이터용)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val e = awaitPointerEvent()
+                        if (e.type == PointerEventType.Scroll) {
+                            val change = e.changes.firstOrNull() ?: continue
+                            if (change.isConsumed) continue
+                            val dy = change.scrollDelta.y
+                            if (dy != 0f) {
+                                scrollScope.launch { panelScroll.scrollBy(dy * 120f) }
+                                change.consume()
+                            }
+                        }
+                    }
+                }
+            }
             .padding(gdp(32))
-            .verticalScroll(rememberScrollState()),
+            .verticalScroll(panelScroll),
         verticalArrangement = Arrangement.spacedBy(gdp(20))
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -244,12 +270,12 @@ private fun SimPanel(
             detection.live?.let { s ->
                 Text(
                     "감지: ${s.score}점 · 운전 ${s.drivingMinutes}분 · 기준선 ${if (s.baselineReady) "완료" else "학습 중"}" +
-                        if (s.reasons.isNotEmpty()) " · ${s.reasons.joinToString(" · ")}" else "",
+                            if (s.reasons.isNotEmpty()) " · ${s.reasons.joinToString(" · ")}" else "",
                     color = GyeolColors.Sub, fontSize = gsp(22)
                 )
                 Text(
                     "신호  시간 ${"%.2f".format(s.signals.time)} · 핸들 ${"%.2f".format(s.signals.steer)} · " +
-                        "속도 ${"%.2f".format(s.signals.speed)} · 대화 ${"%.2f".format(s.signals.talk)}",
+                            "속도 ${"%.2f".format(s.signals.speed)} · 대화 ${"%.2f".format(s.signals.talk)}",
                     color = GyeolColors.Sub, fontSize = gsp(22)
                 )
             }
@@ -259,11 +285,14 @@ private fun SimPanel(
             if (lv != null && setLv != null) {
                 Text("운전 상태 (테스트 모드 · D단에서 적용)", color = GyeolColors.Text, fontSize = gsp(24),
                     fontWeight = FontWeight.Bold)
-                Row(horizontalArrangement = Arrangement.spacedBy(gdp(12))) {
-                    listOf("정상", "조금 졸림", "많이 졸림", "아주 졸림").forEachIndexed { i, name ->
-                        GyeolButton(name, null, Modifier.weight(1f),
-                            container = if (i == lv) GyeolColors.Blue else GyeolColors.Raised,
-                            medium = true) { setLv(i) }
+                // 패널이 좁아서 한 줄에 4개면 글자가 잘림 → 2개씩 두 줄
+                listOf("정상", "조금 졸림", "많이 졸림", "아주 졸림").withIndex().chunked(2).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(gdp(12))) {
+                        row.forEach { (i, name) ->
+                            GyeolButton(name, null, Modifier.weight(1f),
+                                container = if (i == lv) GyeolColors.Blue else GyeolColors.Raised,
+                                medium = true) { setLv(i) }
+                        }
                     }
                 }
                 Text("정상 → 괜찮음 유지 · 조금 졸림 → 대화 · 많이 졸림 → 환경 · 아주 졸림 → 휴식 (1~2분 걸려요)",
@@ -304,6 +333,26 @@ private fun SimPanel(
         PanelToggle("창문 자동 열기", settings.windowAuto) { onSettingsChange(settings.copy(windowAuto = it)) }
         PanelToggle("비 오는 중 (창문 안 열기)", settings.simRaining) { onSettingsChange(settings.copy(simRaining = it)) }
         PanelToggle("실제 Pleos 내비로 안내", settings.useRealNavi) { onSettingsChange(settings.copy(useRealNavi = it)) }
+        if (settings.useRealNavi) {
+            PanelToggle("길안내가 끝나면 곁으로 돌아오기", settings.naviAutoReturn) {
+                onSettingsChange(settings.copy(naviAutoReturn = it))
+            }
+        }
+
+        // 비상 상황 (시뮬레이션)
+        if (emergency != null) {
+            Text("비상 상황 시뮬레이션", color = GyeolColors.Text, fontSize = gsp(24), fontWeight = FontWeight.Bold)
+            Row(horizontalArrangement = Arrangement.spacedBy(gdp(12))) {
+                GyeolButton("무응답 3회", null, Modifier.weight(1f), medium = true) {
+                    emergency.start(EmergencyTrigger.NO_RESPONSE)
+                }
+                GyeolButton("급정거", null, Modifier.weight(1f), medium = true) {
+                    emergency.start(EmergencyTrigger.HARD_BRAKE)
+                }
+            }
+            GyeolButton("연료 부족", null, Modifier.fillMaxWidth(), medium = true) { emergency.fuelLow(28, force = true) }
+            GyeolButton("지금 어떻게 해야 해?", null, Modifier.fillMaxWidth(), medium = true) { emergency.openManual() }
+        }
 
         // 개입 민감도
         Text("개입 민감도", color = GyeolColors.Text, fontSize = gsp(24))
@@ -327,6 +376,8 @@ private fun SimPanel(
 
         Text("기록", color = GyeolColors.Text, fontSize = gsp(24), fontWeight = FontWeight.Bold)
         ui.log.take(12).forEach { Text(it, color = GyeolColors.Sub, fontSize = gsp(18)) }
+        // 패널 아래쪽이 Pleos 독(공조 바)에 가려져서, 맨 아래까지 올려 볼 수 있게 여유 공간
+        Spacer(Modifier.height(gdp(240)))
     }
 }
 

@@ -8,7 +8,16 @@
 
     <!-- 1번 감지: 속도(안드로이드 차량 API), 핸들·기어(Pleos) -->
     <uses-permission android:name="android.car.permission.CAR_SPEED" />
+    <!-- 내비 안내가 끝났을 때 "곁으로 돌아가기" 알림 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 비상 모드: 112/119/긴급견인/비상연락처 전화, 연료(주행 가능 거리) -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.car.permission.CAR_ENERGY" />
     <uses-permission android:name="pleos.car.permission.CAR_DRIVE" />
+
+    <!-- 내비 길안내 중 곁이 멈추지(freeze) 않게 지켜보는 서비스 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <!-- 차량 권한 (조회 CAR_* / 제어 CONTROL_CAR_*) -->
     <uses-permission android:name="pleos.car.permission.CAR_DOORS" />
@@ -72,6 +81,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- 내비 길안내가 끝날 때까지 곁이 멈추지 않게 (안내 종료 → 곁으로 돌아오기) -->
+        <service
+            android:name=".intervention.GuideWatchService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Watches navigation guidance started by the app and returns to the app when guidance ends" />
+        </service>
     </application>
 
 </manifest>

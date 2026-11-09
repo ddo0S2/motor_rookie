@@ -73,6 +73,7 @@ fun GyeolApp(
     settings: InterventionSettings,
     onSettingsChange: (InterventionSettings) -> Unit,
     detection: DetectionLink? = null,          // 1번 파트(감지 모듈) 연결. null 이면 슬라이더로만 동작
+    emergency: EmergencyController? = null,    // 비상 모드 (시뮬레이션 패널 버튼용)
 ) {
     var screen by remember { mutableStateOf(AppScreen.SETUP) }   // 앱을 켤 때마다 처음 설정부터
     when (screen) {
@@ -85,7 +86,7 @@ fun GyeolApp(
             onPowerNap = detection?.onOpenPowerNap
         )
         AppScreen.VOICE_TEST -> VoiceTestScreen(manager, onBack = { screen = AppScreen.SETUP })
-        AppScreen.MAIN -> InterventionDemoScreen(manager, settings, onSettingsChange, detection)
+        AppScreen.MAIN -> InterventionDemoScreen(manager, settings, onSettingsChange, detection, emergency)
     }
 }
 
@@ -113,7 +114,10 @@ private val NEEDED_PERMISSIONS = arrayOf(
     "pleos.car.permission.CAR_DRIVE",     // 감지: 핸들·기어
     Manifest.permission.RECORD_AUDIO,
     Manifest.permission.ACCESS_FINE_LOCATION,
-    Manifest.permission.ACCESS_COARSE_LOCATION
+    Manifest.permission.ACCESS_COARSE_LOCATION,
+    "android.permission.POST_NOTIFICATIONS",  // 내비 안내 종료 후 "곁으로 돌아가기" 알림
+    Manifest.permission.CALL_PHONE,           // 비상: 112/119/긴급견인/비상연락처 전화
+    "android.car.permission.CAR_ENERGY"       // 비상: 연료 부족(주행 가능 거리)
 )
 
 private fun permissionsGranted(context: Context) = listOf(
