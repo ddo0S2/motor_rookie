@@ -78,7 +78,9 @@ import kotlin.math.sin
 
 private object EmColors {
     val Red = Color(0xFF920000)          // emergency-red
-    val Card = Color(0x3D000000)         // rgba(0,0,0,0.24)
+    // Stitch 는 rgba(0,0,0,0.24) 반투명이지만, 반투명 카드에 그림자를 주면 안쪽에 그림자 네모가 비쳐 보여서
+    // 빨간 배경(#920000) 위에 겹친 결과색을 불투명으로 사용 (0.76 × 0x92 = 0x6F)
+    val Card = Color(0xFF6F0000)
     val White = Color(0xFFFFFFFF)
     val Dark = Color(0xFF131417)         // action-dark
 }
@@ -195,18 +197,15 @@ private fun ChecklistCard(ui: EmergencyUi, modifier: Modifier) {
                             Text("$n", color = EmColors.White, fontSize = gsp(22), fontWeight = FontWeight.Bold)
                         }
                     }
-                    Text(label, color = if (done || current) EmColors.White else EmColors.White.copy(alpha = 0.95f),
-                        fontSize = gsp(30), fontWeight = if (done || current) FontWeight.Bold else FontWeight.Medium,
-                        letterSpacing = (-0.025).em, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false))
+                    // 글자가 잘리지 않게: 한 줄에 안 들어가면 두 줄로 (말줄임 없음)
+                    Text(label, color = if (done || current) EmColors.White else EmColors.White.copy(alpha = 0.85f),
+                        fontSize = gsp(28), fontWeight = if (done || current) FontWeight.Bold else FontWeight.Medium,
+                        letterSpacing = (-0.025).em, lineHeight = gsp(34),
+                        modifier = Modifier.weight(1f))
+                    // Stitch 디자인처럼 ① 비상등 켜기에만 "작동중" 배지
                     if (n == 1 && ui.hazardOn) {
-                        Spacer(Modifier.weight(1f))
                         Text("작동중", color = EmColors.White, fontSize = gsp(18), fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.background(EmColors.White.copy(alpha = 0.2f), CircleShape)
-                                .padding(horizontal = gdp(14), vertical = gdp(4)))
-                    } else if (current && n > 1) {
-                        Spacer(Modifier.weight(1f))
-                        Text("안내 중", color = EmColors.White, fontSize = gsp(18), fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
                             modifier = Modifier.background(EmColors.White.copy(alpha = 0.2f), CircleShape)
                                 .padding(horizontal = gdp(14), vertical = gdp(4)))
                     }
@@ -221,14 +220,14 @@ private fun ChecklistCard(ui: EmergencyUi, modifier: Modifier) {
 private fun ActionGrid(ui: EmergencyUi, ec: EmergencyController) {
     Column(verticalArrangement = Arrangement.spacedBy(gdp(24))) {
         Row(horizontalArrangement = Arrangement.spacedBy(gdp(24))) {
-            WhiteAction("112 / 119 신고", null, 30, Modifier.weight(1f), asterisk = true) { ec.onReportButton() }
-            WhiteAction("긴급견인 1588-2504", Icons.Outlined.LocalShipping, 27, Modifier.weight(1f)) {
+            WhiteAction("112 / 119 신고", null, 28, Modifier.weight(1f), asterisk = true) { ec.onReportButton() }
+            WhiteAction("긴급견인 1588-2504", Icons.Outlined.LocalShipping, 24, Modifier.weight(1f)) {
                 ec.onCallButton(CallTarget.TOW)
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(gdp(24))) {
             WhiteAction(ui.contactName?.let { "${it}에게 전화" } ?: "비상연락처에 전화",
-                Icons.Outlined.ContactPhone, 28, Modifier.weight(1f)) { ec.onContactButton() }
+                Icons.Outlined.ContactPhone, 26, Modifier.weight(1f)) { ec.onContactButton() }
             OutlineAction("괜찮아요, 취소", Icons.Outlined.CheckCircle, Modifier.weight(1f)) { ec.cancel() }
         }
     }
@@ -239,11 +238,11 @@ private fun ActionGrid(ui: EmergencyUi, ec: EmergencyController) {
 private fun ReportChoiceGrid(ec: EmergencyController) {
     Column(verticalArrangement = Arrangement.spacedBy(gdp(24))) {
         Row(horizontalArrangement = Arrangement.spacedBy(gdp(24))) {
-            WhiteAction("112 경찰 · 사고", null, 30, Modifier.weight(1f), asterisk = true) { ec.onCallButton(CallTarget.POLICE) }
-            WhiteAction("119 구급 · 화재", null, 30, Modifier.weight(1f), asterisk = true) { ec.onCallButton(CallTarget.FIRE) }
+            WhiteAction("112 경찰 · 사고", null, 26, Modifier.weight(1f), asterisk = true) { ec.onCallButton(CallTarget.POLICE) }
+            WhiteAction("119 구급 · 화재", null, 26, Modifier.weight(1f), asterisk = true) { ec.onCallButton(CallTarget.FIRE) }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(gdp(24))) {
-            WhiteAction("긴급견인 1588-2504", Icons.Outlined.LocalShipping, 27, Modifier.weight(1f)) {
+            WhiteAction("긴급견인 1588-2504", Icons.Outlined.LocalShipping, 24, Modifier.weight(1f)) {
                 ec.onCallButton(CallTarget.TOW)
             }
             OutlineAction("뒤로", Icons.Outlined.ArrowBack, Modifier.weight(1f)) { ec.backToGuide() }
@@ -336,11 +335,11 @@ private fun WhiteAction(
         onClick = onClick,
         modifier = modifier.height(gdp(120)).shadow(gdp(16), RoundedCornerShape(gdp(32))),
         shape = RoundedCornerShape(gdp(32)),
-        contentPadding = PaddingValues(horizontal = gdp(24)),
+        contentPadding = PaddingValues(horizontal = gdp(16)),
         colors = ButtonDefaults.buttonColors(containerColor = EmColors.White, contentColor = EmColors.Dark)
     ) {
-        if (asterisk) Asterisk(gdp(42).value) else if (icon != null) Icon(icon, null, modifier = Modifier.size(gdp(42)))
-        Spacer(Modifier.width(gdp(16)))
+        if (asterisk) Asterisk(gdp(36).value) else if (icon != null) Icon(icon, null, modifier = Modifier.size(gdp(36)))
+        Spacer(Modifier.width(gdp(12)))
         Text(label, fontSize = gsp(textSize), fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.025).em,
             maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
@@ -353,12 +352,12 @@ private fun OutlineAction(label: String, icon: ImageVector, modifier: Modifier, 
         modifier = modifier.height(gdp(120)),
         shape = RoundedCornerShape(gdp(32)),
         border = BorderStroke(3.dp(), EmColors.White),
-        contentPadding = PaddingValues(horizontal = gdp(24)),
+        contentPadding = PaddingValues(horizontal = gdp(16)),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = EmColors.White)
     ) {
-        Icon(icon, null, modifier = Modifier.size(gdp(40)))
-        Spacer(Modifier.width(gdp(16)))
-        Text(label, fontSize = gsp(28), fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.025).em, maxLines = 1)
+        Icon(icon, null, modifier = Modifier.size(gdp(36)))
+        Spacer(Modifier.width(gdp(12)))
+        Text(label, fontSize = gsp(26), fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.025).em, maxLines = 1)
     }
 }
 
