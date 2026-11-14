@@ -370,7 +370,8 @@ private fun SimPanel(
 
                 // ── 설정: 공조·창문·내비 스위치 ──
                 2 -> {
-                    PanelToggle("버튼으로 대답 · 가짜 공조", settings.simulation) { onSettingsChange(settings.copy(simulation = it)) }
+                    PanelToggle("음성으로 대답 (Pleos 음성 인식)", settings.voiceAnswer) { onSettingsChange(settings.copy(voiceAnswer = it)) }
+                    PanelToggle("가짜 공조 · 가짜 전화 (시뮬레이션)", settings.simulation) { onSettingsChange(settings.copy(simulation = it)) }
                     PanelToggle("공조 자동 조절", settings.climateAuto) { onSettingsChange(settings.copy(climateAuto = it)) }
                     PanelToggle("창문 자동 열기", settings.windowAuto) { onSettingsChange(settings.copy(windowAuto = it)) }
                     PanelToggle("비 오는 중 (창문 안 열기)", settings.simRaining) { onSettingsChange(settings.copy(simRaining = it)) }

@@ -16,6 +16,7 @@ data class InterventionSettings(
     val simRaining: Boolean = false,
     val useRealNavi: Boolean = true,         // [안내 시작] 때 실제 Pleos 내비로 보낼지 (끄면 가짜 내비)
     val naviAutoReturn: Boolean = true,      // 내비에서 길안내가 끝나면 곁 화면으로 돌아올지
+    val voiceAnswer: Boolean = true,         // 퀴즈·질문에 음성으로 대답 (Pleos 음성 인식). 끄면 화면 버튼
     val sensitivity: Sensitivity = Sensitivity.NORMAL,
     val quizTypes: Set<QuizType> = QuizType.values().toSet(),
     val simulation: Boolean = true
@@ -39,6 +40,7 @@ object InterventionSettingsStore {
             windowRainOff = p.getBoolean("window_rain_off", true),
             useRealNavi = p.getBoolean("use_real_navi", true),
             naviAutoReturn = p.getBoolean("navi_auto_return", true),
+            voiceAnswer = p.getBoolean("voice_answer", true),
             sensitivity = runCatching { Sensitivity.valueOf(p.getString("sensitivity", "NORMAL")!!) }
                 .getOrDefault(Sensitivity.NORMAL),
             quizTypes = types,
@@ -53,6 +55,7 @@ object InterventionSettingsStore {
             .putBoolean("window_rain_off", s.windowRainOff)
             .putBoolean("use_real_navi", s.useRealNavi)
             .putBoolean("navi_auto_return", s.naviAutoReturn)
+            .putBoolean("voice_answer", s.voiceAnswer)
             .putString("sensitivity", s.sensitivity.name)
             .putStringSet("quiz_types", s.quizTypes.map { it.name }.toSet())
             .putBoolean("simulation", s.simulation)

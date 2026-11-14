@@ -76,7 +76,7 @@ class MainActivity : ComponentActivity() {
      *  CSV      : 녹화된 2시간 34분 주행을 그대로 재생 (단계가 혼자 쭉 진행됨)
      *  LIVE     : 에뮬레이터/실제 차 값 그대로 (Virtual Console 속도·핸들·기어)
      */
-    private val dataMode = DataMode.LIVE
+    private val dataMode = DataMode.SCENARIO
     /** 테스트 모드 배속. 5 = 1초에 5초 분량 (평소 운전 학습 3분 → 실제 36초) */
     private val scenarioSpeed = 5.0
     /** CSV 모드: 재생할 데이터와 재생 속도 (60 = 약 2분 30초, 20 = 약 8분) */
@@ -85,7 +85,7 @@ class MainActivity : ComponentActivity() {
     /** LIVE 모드: true = 시간을 줄임 (기준선 3분, 20분이면 시간 점수 최대). 제출 전 false! */
     private val shortTest = false
     /** LIVE 시연 영상용: 평소 운전 학습 1분, 운전 시간 점수 5분이면 최대, 점수 반응을 빠르게. 제출 전 false! */
-    private val liveDemo = true
+    private val liveDemo = false
     // ────────────────────────────────────
 
     private enum class DataMode { SCENARIO, CSV, LIVE }

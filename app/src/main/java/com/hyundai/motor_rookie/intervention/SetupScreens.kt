@@ -125,21 +125,44 @@ private val NEEDED_PERMISSIONS = arrayOf(
     "android.car.permission.CAR_ENERGY"       // 비상: 연료 부족(주행 가능 거리)
 )
 
-private fun permissionsGranted(context: Context) = listOf(
-    Manifest.permission.RECORD_AUDIO, Manifest.permission.ACCESS_FINE_LOCATION,
-    "android.car.permission.CAR_SPEED", "pleos.car.permission.CAR_DRIVE"
-).all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+private fun has(context: Context, p: String) =
+    context.checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
+
+/**
+ * 꼭 필요한 권한 중 아직 없는 것의 이름 (비어 있으면 [허용됨]).
+ *  - 위치는 정확한 위치 / 대략적인 위치 둘 중 하나만 있어도 OK (쉼터 검색은 대략 위치로도 충분)
+ *  - 전화·알림·연료는 있으면 좋은 권한이라 [허용됨] 판단에는 넣지 않는다
+ */
+private fun missingPermissions(context: Context): List<String> = buildList {
+    if (!has(context, Manifest.permission.RECORD_AUDIO)) add("마이크")
+    if (!has(context, Manifest.permission.ACCESS_FINE_LOCATION) &&
+        !has(context, Manifest.permission.ACCESS_COARSE_LOCATION)) add("위치")
+    if (!has(context, "android.car.permission.CAR_SPEED")) add("차량 속도")
+    if (!has(context, "pleos.car.permission.CAR_DRIVE")) add("핸들·기어")
+}
+
+private fun permissionsGranted(context: Context) = missingPermissions(context).isEmpty()
 
 @Composable
 fun SetupScreen(onVoiceTest: () -> Unit, onDone: () -> Unit, onPowerNap: (() -> Unit)? = null) {
     val context = LocalContext.current
-    var granted by remember { mutableStateOf(permissionsGranted(context)) }
+    var missing by remember { mutableStateOf(missingPermissions(context)) }
+    val granted = missing.isEmpty()
+    // 권한 창을 닫고 돌아오거나 터미널로 허용한 뒤 앱으로 돌아오면 다시 확인
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) missing = missingPermissions(context)
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
     var contact by remember { mutableStateOf(EmergencyContactStore.load(context)) }
     var showContactDialog by remember { mutableStateOf(false) }
     // 주행 중에는 키보드 입력(비상연락처 등록)을 막는다 (Pleos 주행 중 규제)
     val driving by DrivingRestriction.restricted.collectAsState()
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        granted = permissionsGranted(context)
+        missing = missingPermissions(context)
     }
 
     GyeolScaled(Modifier.background(GyeolColors.Bg).safeDrawingPadding(), baseWidth = 1280f, baseHeight = 888f) {
@@ -170,19 +193,23 @@ fun SetupScreen(onVoiceTest: () -> Unit, onDone: () -> Unit, onPowerNap: (() -> 
                     SetupRow(
                         icon = Icons.Outlined.VerifiedUser, iconTint = GyeolColors.Blue,
                         title = "차량 제어 · 마이크 권한 허용",
-                        sub = if (granted) "모든 권한이 허용됐어요" else "공조, 창문, 비상등 제어와 음성 대화에 필요해요",
+                        sub = when {
+                            granted -> "모든 권한이 허용됐어요"
+                            missing.size < 4 -> "아직 필요한 권한: ${missing.joinToString(", ")}"
+                            else -> "공조, 창문, 비상등 제어와 음성 대화에 필요해요"
+                        },
                         button = if (granted) "허용됨" else "허용",
                         buttonColor = if (granted) GyeolColors.Raised else GyeolColors.Blue,
                         buttonIcon = if (granted) Icons.Outlined.Check else null
                     ) {
-                        granted = permissionsGranted(context)
-                        if (!granted) launcher.launch(NEEDED_PERMISSIONS)
+                        missing = missingPermissions(context)
+                        if (missing.isNotEmpty()) launcher.launch(NEEDED_PERMISSIONS)
                     }
                     SetupRow(
                         icon = Icons.Outlined.People, iconTint = GyeolColors.Text,
                         title = "비상연락처 등록",
                         sub = if (driving) "정차 중에 추가할 수 있어요"
-                            else contact?.let { "${it.name} · ${it.phone}" } ?: "비상 시 바로 연락할 사람",
+                        else contact?.let { "${it.name} · ${it.phone}" } ?: "비상 시 바로 연락할 사람",
                         button = if (contact != null) "변경" else "연락처 추가",
                         buttonColor = GyeolColors.Raised,
                         buttonIcon = if (contact != null) Icons.Outlined.Check else null
