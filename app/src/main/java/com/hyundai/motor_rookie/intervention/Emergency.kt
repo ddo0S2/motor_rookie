@@ -262,7 +262,7 @@ class EmergencyController(
 
     /** 예/아니요 질문. 대답이 없으면 null */
     private suspend fun ask(question: String): Boolean? {
-        val manual = sim || !realInput.available
+        val manual = !settings().voiceAnswer || !realInput.available
         _ui.update { it.copy(question = question, manualAnswer = manual, listening = false) }
         voiceOut.speak(question)
         val answer: Boolean? = if (manual) {
@@ -492,7 +492,7 @@ class EmergencyController(
 /**
  * 안드로이드 차량 표준 API(CarPropertyManager)로
  *  - 속도: 2초 안에 30km/h 이상 줄면 급정거 (40km/h 이상에서 출발했을 때만)
- *  - 연료: 주행 가능 거리(RANGE_REMAINING) 50km 미만, 또는 연료 부족 경고(FUEL_LEVEL_LOW)
+ *  - 연료: 주행 가능 거리(RANGE_REMAINING) 1~49km 이고 달리는 중일 때 (FUEL_LEVEL_LOW 는 기록만)
  * 권한: CAR_SPEED, CAR_ENERGY (없으면 그 부분만 조용히 꺼짐)
  */
 class VehicleEmergencyMonitor(
@@ -505,10 +505,27 @@ class VehicleEmergencyMonitor(
     private val speeds = ArrayDeque<Pair<Long, Float>>()
     private var lastBrake = 0L
     @Volatile private var rangeKm = -1
+    @Volatile private var speedKmh = 0f
+    /** 주행 가능 거리가 부족한데 아직 출발 전이면, 달리기 시작할 때 한 번 알린다 */
+    @Volatile private var fuelLowPending = false
+
+    /**
+     * 연료 부족 알림 조건
+     *  - 주행 가능 거리가 1~49km 일 때만 (0 이하는 "값 없음"으로 보고 무시: 에뮬레이터는 0을 보내기도 함)
+     *  - 실제로 달리는 중(5km/h 이상)일 때만. 앱을 켜자마자 정차 상태에서 뜨지 않게.
+     */
+    private fun checkFuel() {
+        if (rangeKm !in 1 until 50) { fuelLowPending = false; return }
+        if (speedKmh < 5f) { fuelLowPending = true; return }
+        fuelLowPending = false
+        onFuelLow(rangeKm)
+    }
 
     private val speedCb = object : CarPropertyManager.CarPropertyEventCallback {
         override fun onChangeEvent(value: CarPropertyValue<*>) {
             val kmh = (value.value as? Float ?: return) * 3.6f
+            speedKmh = kmh
+            if (fuelLowPending && kmh >= 5f) checkFuel()
             val now = SystemClock.elapsedRealtime()
             speeds.addLast(now to kmh)
             while (speeds.isNotEmpty() && now - speeds.first().first > 2_000) speeds.removeFirst()
@@ -527,14 +544,17 @@ class VehicleEmergencyMonitor(
         override fun onChangeEvent(value: CarPropertyValue<*>) {
             val meters = value.value as? Float ?: return
             rangeKm = (meters / 1000f).toInt()
-            if (rangeKm in 0 until 50) onFuelLow(rangeKm)
+            Log.d(TAG, "주행 가능 거리 ${rangeKm}km")
+            checkFuel()
         }
         override fun onErrorEvent(propertyId: Int, areaId: Int) {}
     }
 
     private val lowCb = object : CarPropertyManager.CarPropertyEventCallback {
         override fun onChangeEvent(value: CarPropertyValue<*>) {
-            if (value.value == true) onFuelLow(if (rangeKm >= 0) rangeKm else 30)
+            // 에뮬레이터(전기차)는 이 경고를 계속 true 로 보내는 경우가 있어서 기록만 하고,
+            // 알림은 주행 가능 거리(RANGE_REMAINING)로만 판단한다
+            Log.d(TAG, "차량 연료 부족 경고: ${value.value}")
         }
         override fun onErrorEvent(propertyId: Int, areaId: Int) {}
     }
