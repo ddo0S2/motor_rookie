@@ -40,6 +40,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -86,7 +87,8 @@ fun GyeolApp(
             onPowerNap = detection?.onOpenPowerNap
         )
         AppScreen.VOICE_TEST -> VoiceTestScreen(manager, onBack = { screen = AppScreen.SETUP })
-        AppScreen.MAIN -> InterventionDemoScreen(manager, settings, onSettingsChange, detection, emergency)
+        AppScreen.MAIN -> InterventionDemoScreen(manager, settings, onSettingsChange, detection, emergency,
+            onOpenSetup = { screen = AppScreen.SETUP })
     }
 }
 
@@ -104,6 +106,9 @@ object EmergencyContactStore {
     fun save(context: Context, c: EmergencyContact) {
         context.getSharedPreferences(NAME, Context.MODE_PRIVATE).edit()
             .putString("name", c.name).putString("phone", c.phone).apply()
+    }
+    fun clear(context: Context) {
+        context.getSharedPreferences(NAME, Context.MODE_PRIVATE).edit().clear().apply()
     }
 }
 
@@ -131,6 +136,8 @@ fun SetupScreen(onVoiceTest: () -> Unit, onDone: () -> Unit, onPowerNap: (() -> 
     var granted by remember { mutableStateOf(permissionsGranted(context)) }
     var contact by remember { mutableStateOf(EmergencyContactStore.load(context)) }
     var showContactDialog by remember { mutableStateOf(false) }
+    // 주행 중에는 키보드 입력(비상연락처 등록)을 막는다 (Pleos 주행 중 규제)
+    val driving by DrivingRestriction.restricted.collectAsState()
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         granted = permissionsGranted(context)
     }
@@ -174,11 +181,12 @@ fun SetupScreen(onVoiceTest: () -> Unit, onDone: () -> Unit, onPowerNap: (() -> 
                     SetupRow(
                         icon = Icons.Outlined.People, iconTint = GyeolColors.Text,
                         title = "비상연락처 등록",
-                        sub = contact?.let { "${it.name} · ${it.phone}" } ?: "비상 시 바로 연락할 사람",
+                        sub = if (driving) "정차 중에 추가할 수 있어요"
+                            else contact?.let { "${it.name} · ${it.phone}" } ?: "비상 시 바로 연락할 사람",
                         button = if (contact != null) "변경" else "연락처 추가",
                         buttonColor = GyeolColors.Raised,
                         buttonIcon = if (contact != null) Icons.Outlined.Check else null
-                    ) { showContactDialog = true }
+                    ) { if (!driving) showContactDialog = true }
                     SetupRow(
                         icon = Icons.Outlined.Mic, iconTint = GyeolColors.Text,
                         title = "음성 테스트",
@@ -210,10 +218,11 @@ fun SetupScreen(onVoiceTest: () -> Unit, onDone: () -> Unit, onPowerNap: (() -> 
         }
     }
 
-    if (showContactDialog) {
+    if (showContactDialog && !driving) {
         ContactDialog(
             initial = contact,
             onSave = { c -> EmergencyContactStore.save(context, c); contact = c; showContactDialog = false },
+            onDelete = if (contact != null) ({ EmergencyContactStore.clear(context); contact = null; showContactDialog = false }) else null,
             onDismiss = { showContactDialog = false }
         )
     }
@@ -283,7 +292,12 @@ private fun SetupBigButton(
 
 /** 비상연락처 입력 (정차 중에만 쓰는 화면이라 키보드 입력 허용) */
 @Composable
-private fun ContactDialog(initial: EmergencyContact?, onSave: (EmergencyContact) -> Unit, onDismiss: () -> Unit) {
+private fun ContactDialog(
+    initial: EmergencyContact?,
+    onSave: (EmergencyContact) -> Unit,
+    onDismiss: () -> Unit,
+    onDelete: (() -> Unit)? = null,
+) {
     var name by remember { mutableStateOf(initial?.name ?: "") }
     var phone by remember { mutableStateOf(initial?.phone ?: "") }
     val fieldColors = OutlinedTextFieldDefaults.colors(
@@ -304,6 +318,7 @@ private fun ContactDialog(initial: EmergencyContact?, onSave: (EmergencyContact)
                 singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                 colors = fieldColors, modifier = Modifier.fillMaxWidth())
             Row(horizontalArrangement = Arrangement.spacedBy(gdp(16))) {
+                if (onDelete != null) SetupBigButton("삭제", null, GyeolColors.Raised, Modifier.weight(1f), onDelete)
                 SetupBigButton("취소", null, GyeolColors.Raised, Modifier.weight(1f), onDismiss)
                 SetupBigButton("저장", null, GyeolColors.Blue, Modifier.weight(1f), {
                     if (name.isNotBlank() && phone.isNotBlank()) onSave(EmergencyContact(name.trim(), phone.trim()))

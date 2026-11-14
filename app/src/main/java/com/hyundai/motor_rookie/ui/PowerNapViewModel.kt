@@ -47,7 +47,7 @@ private const val USE_FAKE_VEHICLE = false
  * 파워냅 빠른 테스트: true 면 "1분"을 4초로 줄입니다. (제출·실차 시연 전 false!)
  *  15분 타이머 → 60초, 최소 5분 → 20초, 5분 연장 → 20초, 10분 더 쉬기 → 40초, 재확인 대기 5분 → 20초
  */
-const val NAP_FAST_TEST = true
+const val NAP_FAST_TEST = false
 private val SEC_PER_MIN = if (NAP_FAST_TEST) 4 else 60
 
 /** "실제 초"를 테스트 배속에 맞춘 초로 바꿉니다. (5분 = 300초 → 빠른 테스트에서는 20초) */

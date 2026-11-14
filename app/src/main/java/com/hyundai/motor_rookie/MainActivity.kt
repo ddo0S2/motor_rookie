@@ -25,6 +25,7 @@ import com.hyundai.motor_rookie.fatigue.FatigueLevel
 import com.hyundai.motor_rookie.intervention.AndroidLocationSource
 import com.hyundai.motor_rookie.intervention.AndroidStt
 import com.hyundai.motor_rookie.intervention.DetectionLink
+import com.hyundai.motor_rookie.intervention.DrivingRestriction
 import com.hyundai.motor_rookie.intervention.EmergencyController
 import com.hyundai.motor_rookie.intervention.EmergencyLayer
 import com.hyundai.motor_rookie.intervention.EmergencyTrigger
@@ -83,6 +84,8 @@ class MainActivity : ComponentActivity() {
     private val speedFactor = 60.0
     /** LIVE 모드: true = 시간을 줄임 (기준선 3분, 20분이면 시간 점수 최대). 제출 전 false! */
     private val shortTest = false
+    /** LIVE 시연 영상용: 평소 운전 학습 1분, 운전 시간 점수 5분이면 최대, 점수 반응을 빠르게. 제출 전 false! */
+    private val liveDemo = false
     // ────────────────────────────────────
 
     private enum class DataMode { SCENARIO, CSV, LIVE }
@@ -127,6 +130,9 @@ class MainActivity : ComponentActivity() {
 
         vehicle = Vehicle(this)
         vehicle.initialize()
+
+        // 주행 중 규제 상태 (distractionOptimized 앱은 CarUxRestrictions 를 따라야 함)
+        DrivingRestriction.start(this)
 
         // 실제 Pleos 내비 (연결 실패해도 앱은 가짜 내비로 계속 동작)
         navi = runCatching { PleosNavigationController(this) }.getOrNull()
@@ -197,7 +203,7 @@ class MainActivity : ComponentActivity() {
         // "지금 휴식 단계"이거나 "최근 10분 안에 휴식 단계였으면" 허용한다.
         napVm.autoStartAllowed = {
             manager.ui.value.stage == Stage.REST ||
-                android.os.SystemClock.elapsedRealtime() - lastRestAt < REST_GRACE_MS
+                    android.os.SystemClock.elapsedRealtime() - lastRestAt < REST_GRACE_MS
         }
         lifecycleScope.launch {
             var prev = Stage.OBSERVE
@@ -244,35 +250,35 @@ class MainActivity : ComponentActivity() {
                 val scLevel = sc?.level?.collectAsState()?.value
                 val napActive = nap.screen != NapScreen.SETTINGS && nap.screen != NapScreen.ALARM_SOUND
                 Box(Modifier.fillMaxSize()) {
-                // 처음 설정 → 음성 테스트 → 주행 메인
-                GyeolApp(
-                    manager = manager,
-                    settings = settings,
-                    onSettingsChange = {
-                        settings = it
-                        InterventionSettingsStore.save(this@MainActivity, it)
-                    },
-                    detection = DetectionLink(
-                        live = live,
-                        useDetection = useDetection,
-                        onUseDetectionChange = { useDetection = it },
-                        feedScore = { feedScore(it) },
-                        onRestart = { startDetection() },
-                        onOpenPowerNap = { napSettingsOpen = true },
-                        scenarioLevel = scLevel,
-                        onScenarioLevel = sc?.let { src -> { lv: Int -> src.setLevel(lv) } },
-                    ),
-                    emergency = emergency,
-                )
-                // 파워냅이 진행 중이거나 환경 저장 화면을 열었을 때만 맨 위에 덮는다.
-                // (Surface 가 아래 화면으로 터치가 새지 않게 막아 준다. 아래 화면은 그대로 살아 있음)
-                if (napActive || napSettingsOpen) {
-                    Surface(Modifier.fillMaxSize()) {
-                        PowerNapApp(onExit = { napSettingsOpen = false }, vm = napVm)
+                    // 처음 설정 → 음성 테스트 → 주행 메인
+                    GyeolApp(
+                        manager = manager,
+                        settings = settings,
+                        onSettingsChange = {
+                            settings = it
+                            InterventionSettingsStore.save(this@MainActivity, it)
+                        },
+                        detection = DetectionLink(
+                            live = live,
+                            useDetection = useDetection,
+                            onUseDetectionChange = { useDetection = it },
+                            feedScore = { feedScore(it) },
+                            onRestart = { startDetection() },
+                            onOpenPowerNap = { napSettingsOpen = true },
+                            scenarioLevel = scLevel,
+                            onScenarioLevel = sc?.let { src -> { lv: Int -> src.setLevel(lv) } },
+                        ),
+                        emergency = emergency,
+                    )
+                    // 파워냅이 진행 중이거나 환경 저장 화면을 열었을 때만 맨 위에 덮는다.
+                    // (Surface 가 아래 화면으로 터치가 새지 않게 막아 준다. 아래 화면은 그대로 살아 있음)
+                    if (napActive || napSettingsOpen) {
+                        Surface(Modifier.fillMaxSize()) {
+                            PowerNapApp(onExit = { napSettingsOpen = false }, vm = napVm)
+                        }
                     }
-                }
-                // 비상 화면 · 연료 부족 · 행동요령 (맨 위)
-                EmergencyLayer(emergency)
+                    // 비상 화면 · 연료 부족 · 행동요령 (맨 위)
+                    EmergencyLayer(emergency)
                 }
             }
         }
@@ -299,6 +305,9 @@ class MainActivity : ComponentActivity() {
         }
         scenario = source as? ScenarioDataSource
         val engine = when {
+            // LIVE 시연 영상용: 시간 관련 숫자만 줄임 (가중치·판단 기준은 실제와 같음)
+            dataMode == DataMode.LIVE && liveDemo ->
+                FatigueEngine(FatigueConfig(baselineSec = 60, fullFatigueSec = 300.0, smoothingSec = 8.0))
             // 테스트 모드: 평소 운전 학습만 3분으로 줄임 (나머지 계산은 실제와 같음)
             dataMode == DataMode.SCENARIO -> FatigueEngine(FatigueConfig(baselineSec = 180))
             shortTest -> FatigueEngine(FatigueConfig(baselineSec = 180, fullFatigueSec = 1200.0))
@@ -308,7 +317,16 @@ class MainActivity : ComponentActivity() {
         module.start()
         detection = module
         bridgeJob = lifecycleScope.launch {
-            module.fatigue.collect { s -> if (useDetection && !manager.paused) feedScore(s.score) }
+            var lastFormulaLog = 0L
+            module.fatigue.collect { s ->
+                if (useDetection && !manager.paused) feedScore(s.score)
+                // 시연용: 2초마다 계산식에 들어간 값을 Logcat 에 보여 줌 (필터 tag:FATIGUE)
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (now - lastFormulaLog >= 2_000) {
+                    lastFormulaLog = now
+                    logFormula(s)
+                }
+            }
         }
     }
 
@@ -329,6 +347,26 @@ class MainActivity : ComponentActivity() {
         manager.onFatigueScore(score)
     }
 
+    /**
+     * 피로 점수 계산식을 그대로 풀어서 Logcat(tag:FATIGUE)에 찍는다.
+     *   F = 100 × min(1, m × (0.25·s_time + 0.30·s_steer + 0.15·s_speed + 0.30·s_talk + 0.15·s_signal))
+     * 표시 점수는 튀지 않게 부드럽게 따라가서, 계산값과 잠깐 다를 수 있다.
+     */
+    private fun logFormula(s: com.hyundai.motor_rookie.fatigue.FatigueState) {
+        val g = s.signals
+        val sum = 0.25 * g.time + 0.30 * g.steer + 0.15 * g.speed + 0.30 * g.talk + 0.15 * g.signal
+        val raw = (100 * minOf(1.0, s.multiplier * sum)).toInt()
+        fun f(v: Double) = "%.2f".format(v)
+        val why = if (s.reasons.isEmpty()) "" else " (" + s.reasons.joinToString(" · ") + ")"
+        Log.i(
+            "FATIGUE",
+            "F = 100 × ${f(s.multiplier)}$why × (0.25·시간 ${f(g.time)} + 0.30·핸들 ${f(g.steer)} + " +
+                    "0.15·속도 ${f(g.speed)} + 0.30·대화 ${f(g.talk)} + 0.15·경고 ${f(g.signal)}) = $raw" +
+                    "  → 표시 점수 ${s.score} · ${s.level} · 운전 ${s.drivingMinutes}분" +
+                    if (s.baselineReady) "" else " · 평소 운전 학습 중"
+        )
+    }
+
     private fun Stage.toLevel(): FatigueLevel = when (this) {
         Stage.OBSERVE -> FatigueLevel.NORMAL
         Stage.TALK -> FatigueLevel.TALK
@@ -344,6 +382,7 @@ class MainActivity : ComponentActivity() {
         speaker.release()
         navi?.release()
         emergencyMonitor?.stop()
+        DrivingRestriction.stop()
         emergency.shutdown()
         vehicle.release()
         super.onDestroy()

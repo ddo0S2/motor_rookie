@@ -69,7 +69,8 @@ fun InterventionDemoScreen(
     settings: InterventionSettings,
     onSettingsChange: (InterventionSettings) -> Unit,
     detection: DetectionLink? = null,
-    emergency: EmergencyController? = null
+    emergency: EmergencyController? = null,
+    onOpenSetup: (() -> Unit)? = null,
 ) {
     val ui by manager.ui.collectAsState()
     // 감지 모듈과 연결돼 있으면 점수는 감지 모듈이 넣는다 (슬라이더는 꺼 둠)
@@ -103,32 +104,33 @@ fun InterventionDemoScreen(
     val drivingMin = live?.drivingMinutes ?: (((nowMs - startedAt) / 60_000).toInt() + extraMin)
 
     Box(Modifier.fillMaxSize().safeDrawingPadding()) {
-        GyeolScaled(Modifier.background(GyeolColors.Bg)) {
-            DrivingMainScreen(
-                ui = ui,
-                drivingMinutes = drivingMin,
-                onTalk = { manager.talkNow() },
-                onFindRest = { manager.findRestNow() },
-                onSettings = { panelOpen = !panelOpen }
-            )
+    GyeolScaled(Modifier.background(GyeolColors.Bg)) {
+        DrivingMainScreen(
+            ui = ui,
+            drivingMinutes = drivingMin,
+            onTalk = { manager.talkNow() },
+            onFindRest = { manager.findRestNow() },
+            onSettings = { panelOpen = !panelOpen }
+        )
 
-            if (panelOpen) {
-                SimPanel(
-                    manager = manager,
-                    ui = ui,
-                    score = score,
-                    onScore = { score = it; feed(it.roundToInt()) },
-                    detection = detection,
-                    settings = settings,
-                    onSettingsChange = onSettingsChange,
-                    onAddMinutes = { extraMin = (extraMin + it).coerceAtLeast(0) },
-                    onClose = { panelOpen = false },
-                    emergency = emergency,
-                    modifier = Modifier.align(Alignment.CenterEnd)
-                )
-            }
+        if (panelOpen) {
+            SimPanel(
+                manager = manager,
+                ui = ui,
+                score = score,
+                onScore = { score = it; feed(it.roundToInt()) },
+                detection = detection,
+                settings = settings,
+                onSettingsChange = onSettingsChange,
+                onAddMinutes = { extraMin = (extraMin + it).coerceAtLeast(0) },
+                onClose = { panelOpen = false },
+                emergency = emergency,
+                onOpenSetup = onOpenSetup?.let { open -> { panelOpen = false; open() } },
+                modifier = Modifier.align(Alignment.CenterEnd)
+            )
         }
-        InterventionOverlay(manager)
+    }
+    InterventionOverlay(manager)
     }
 }
 
@@ -210,6 +212,7 @@ private fun SimPanel(
     onClose: () -> Unit,
     detection: DetectionLink? = null,
     emergency: EmergencyController? = null,
+    onOpenSetup: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val fromDetection = detection?.useDetection == true
@@ -293,12 +296,12 @@ private fun SimPanel(
                         detection.live?.let { s ->
                             Text(
                                 "감지: ${s.score}점 · 운전 ${s.drivingMinutes}분 · 기준선 ${if (s.baselineReady) "완료" else "학습 중"}" +
-                                        if (s.reasons.isNotEmpty()) " · ${s.reasons.joinToString(" · ")}" else "",
+                                    if (s.reasons.isNotEmpty()) " · ${s.reasons.joinToString(" · ")}" else "",
                                 color = GyeolColors.Sub, fontSize = gsp(22)
                             )
                             Text(
                                 "신호  시간 ${"%.2f".format(s.signals.time)} · 핸들 ${"%.2f".format(s.signals.steer)} · " +
-                                        "속도 ${"%.2f".format(s.signals.speed)} · 대화 ${"%.2f".format(s.signals.talk)}",
+                                    "속도 ${"%.2f".format(s.signals.speed)} · 대화 ${"%.2f".format(s.signals.talk)}",
                                 color = GyeolColors.Sub, fontSize = gsp(22)
                             )
                         }
@@ -385,6 +388,22 @@ private fun SimPanel(
                     }
                     Text(if (naviConnected) "실제 Pleos 내비: 연결됨 (안내 시작 → 실제 내비로 전송)" else "실제 Pleos 내비: [안내 시작]을 누르면 연결해요",
                         color = if (naviConnected) GyeolColors.Green else GyeolColors.Sub, fontSize = gsp(22))
+
+                    // 시연용: 처음 화면으로 / 처음 상태로 초기화
+                    Text("시연 준비", color = GyeolColors.Text, fontSize = gsp(24), fontWeight = FontWeight.Bold)
+                    onOpenSetup?.let { open ->
+                        GyeolButton("처음 설정 화면으로", null, Modifier.fillMaxWidth(), medium = true) { open() }
+                    }
+                    val activity = LocalContext.current as? android.app.Activity
+                    var confirmReset by remember { mutableStateOf(false) }
+                    GyeolButton(if (confirmReset) "한 번 더 누르면 초기화하고 앱을 꺼요" else "처음 상태로 초기화",
+                        null, Modifier.fillMaxWidth(),
+                        container = if (confirmReset) GyeolColors.Red else GyeolColors.Raised, medium = true) {
+                        if (!confirmReset) confirmReset = true
+                        else activity?.let { AppReset.resetAndExit(it) }
+                    }
+                    Text("설정·비상연락처·파워냅 환경을 지우고 권한을 되돌려요. 앱이 꺼지면 독에서 곁을 다시 눌러 주세요.",
+                        color = GyeolColors.Sub, fontSize = gsp(18))
                 }
 
                 // ── 비상: 비상 상황 시뮬레이션 · 기록 ──
