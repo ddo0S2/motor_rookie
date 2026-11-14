@@ -41,7 +41,7 @@ import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 /** SDK 연동 전 화면 흐름만 볼 때 true 로 바꾸세요. */
-private const val USE_FAKE_VEHICLE = false
+private const val USE_FAKE_VEHICLE = true
 
 /**
  * 파워냅 빠른 테스트: true 면 "1분"을 4초로 줄입니다. (제출·실차 시연 전 false!)

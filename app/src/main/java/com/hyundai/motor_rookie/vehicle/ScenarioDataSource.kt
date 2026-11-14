@@ -1,5 +1,6 @@
 package com.hyundai.motor_rookie.vehicle
 
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -89,7 +90,19 @@ class ScenarioDataSource(
             while (isActive) {
                 delay(tickMs)
                 if (paused) continue
-                _samples.emit(next())
+                val s = next()
+                _samples.emit(s)
+                // 시연용: 실제 1초마다 테스트 모드가 만든 값을 Logcat 에 보여 줌 (필터 tag:SCENARIO)
+                if (s.timeMs % 5000 == 0L) {
+                    val name = listOf("정상", "조금 졸림", "많이 졸림", "아주 졸림")[_level.value]
+                    Log.i(
+                        "SCENARIO",
+                        "상태 $name · 기어 ${s.gear} · 속도 ${"%.1f".format(s.speedKmh)}km/h · " +
+                                "핸들 ${"%+.1f".format(s.steeringDeg)}°" +
+                                (s.warning?.let { " · 경고 $it" } ?: "")
+                    )
+                }
+
             }
         }
     }
