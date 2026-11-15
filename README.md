@@ -6,7 +6,7 @@
 
 | 시연 영상 | APK | 기획서 |
 |---|---|---|
-| [링크 추가 예정]() | [Releases](../../releases) | [docs/](docs/) |
+| [링크 추가 예정]() | [Releases v1.0](https://github.com/ddo0S2/motor_rookie/releases) | [docs/](docs/) |
 
 ---
 
@@ -69,18 +69,31 @@ docs/                      설계 문서, SDK 확인 결과
 
 모듈 사이 약속: [docs/architecture.md](docs/architecture.md)
 
+## 테스트 환경
+
+| 항목 | 값 |
+|---|---|
+| 에뮬레이터 | Pleos Connect v2.1.0 (Android API 34) |
+| 화면 규격 | 2560 × 1440 px, 160 dpi |
+| 빌드 | Android Studio · AGP 8.5.0 · Gradle 8.7 · Kotlin 1.9.0 |
+| SDK | compileSdk 34 · minSdk 28 · targetSdk 34 |
+| Pleos SDK | Vehicle 2.3.2 · TextToSpeech 3.3.1 · SpeechToText 3.3.1 · NaviHelper 3.0.5 |
+
 ## 실행 방법
 
-### 준비물
-- Android Studio (AGP 8.5 / Gradle 8.7 지원 버전)
-- Pleos Connect 에뮬레이터 (API 34)
-- Pleos Playground 계정
+### APK로 바로 설치
+1. [Releases](https://github.com/ddo0S2/motor_rookie/releases)에서 `gyeot-v1.0.apk`를 내려받습니다.
+2. Pleos Connect 에뮬레이터를 켠 뒤 APK 파일을 에뮬레이터 화면에 끌어다 놓거나, `adb install gyeot-v1.0.apk`로 설치합니다.
 
-### 빌드
+### 소스로 빌드
 1. 이 저장소를 Android Studio에서 엽니다.
 2. `settings.gradle.kts`에 Pleos Maven 저장소(`nexus-playground.pleos.ai`)가 있는지 확인합니다.
-3. 에뮬레이터를 실행하고 ▶ Run 'app'.
-4. 처음 설정 화면에서 권한(마이크·위치·차량)을 허용합니다.
+3. Pleos Connect 에뮬레이터를 실행하고 ▶ Run 'app'.
+
+### 필요한 설정
+- **권한:** 처음 설정 화면에서 마이크·위치·차량(속도, 조향·기어) 권한을 허용합니다. 비상연락처는 정차 중에 등록할 수 있습니다.
+- **Virtual Console (기어·속도 입력):** PC 터미널에서 `adb forward tcp:8088 tcp:8088` 실행 후 브라우저로 `http://127.0.0.1:8088/`에 접속합니다. 3단계(휴식 권장)가 된 뒤 여기서 기어를 P로 바꾸면 파워냅이 시작됩니다.
+- **내비 연동:** 시뮬레이션 패널 설정 탭에서 "실제 내비"를 켜면 쉼터가 Pleos 내비에 경유지·목적지로 들어갑니다.
 
 ### 데이터 모드 (`MainActivity.kt`의 `dataMode`)
 에뮬레이터는 실제로 주행하지 않아 핸들·속도 값이 변하지 않으므로, 세 가지 모드를 둡니다.
