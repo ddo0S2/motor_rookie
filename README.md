@@ -6,8 +6,8 @@
 
 ### APK 설치
 
-1. 저장소의 [`apk/모터루키_곁_release.apk`](https://github.com/ddo0S2/motor_rookie/raw/master/apk/%EB%AA%A8%ED%84%B0%EB%A3%A8%ED%82%A4_%EA%B3%81_release.apk)를 내려받습니다. (같은 파일을 [GitHub Release v1.0](https://github.com/ddo0S2/motor_rookie/releases/tag/v1.0)에서도 받을 수 있습니다.)
-2. Pleos Connect 에뮬레이터를 실행하고, APK를 에뮬레이터 화면에 끌어다 놓거나 `adb install "모터루키_곁_release.apk"`로 설치합니다.
+1. [GitHub Release v1.0](https://github.com/ddo0S2/motor_rookie/releases/tag/v1.0)에서 `motor_rookie_gyeot_release.apk`를 내려받습니다. (저장소의 [`apk/모터루키_곁_release.apk`](https://github.com/ddo0S2/motor_rookie/raw/master/apk/%EB%AA%A8%ED%84%B0%EB%A3%A8%ED%82%A4_%EA%B3%81_release.apk)도 같은 파일입니다.)
+2. Pleos Connect 에뮬레이터를 실행하고, APK를 에뮬레이터 화면에 끌어다 놓거나 `adb install motor_rookie_gyeot_release.apk`로 설치합니다.
 3. debug 버전이 설치돼 있으면 먼저 삭제합니다: `adb uninstall com.hyundai.motor_rookie`
 
 ### 소스 빌드
@@ -29,9 +29,4 @@
 ## 개발에 사용한 Pleos Connect 에뮬레이터 버전과 화면 규격
 
 - **에뮬레이터:** Pleos Connect v2.1.0 (Android API 34)
-- **화면 규격:** 2560 × 1440 px, 160 dpi
-
-## APK 파일 위치
-
-- **저장소:** [`apk/모터루키_곁_release.apk`](apk/) (release 빌드, 79.4MB)
-- **GitHub Release:** [v1.0](https://github.com/ddo0S2/motor_rookie/releases/tag/v1.0)
+-
