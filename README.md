@@ -29,4 +29,9 @@
 ## 개발에 사용한 Pleos Connect 에뮬레이터 버전과 화면 규격
 
 - **에뮬레이터:** Pleos Connect v2.1.0 (Android API 34)
--
+- **화면 규격:** 2560 × 1440 px, 160 dpi
+
+## APK 파일 위치
+
+- **GitHub Release:** [v1.0](https://github.com/ddo0S2/motor_rookie/releases/tag/v1.0) — `motor_rookie_gyeot_release.apk` (release 빌드, 61.8MB)
+- **저장소:** [`apk/모터루키_곁_release.apk`](apk/) (같은 파일)
