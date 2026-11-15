@@ -6,7 +6,7 @@
 
 | 시연 영상 | APK | 기획서 |
 |---|---|---|
-| [링크 추가 예정]() | [Releases v1.0](https://github.com/ddo0S2/motor_rookie/releases) | [docs/](docs/) |
+| [링크 추가 예정]() | [apk/모터루키_곁_release.apk](apk/) | [docs/](docs/) |
 
 ---
 
@@ -82,8 +82,9 @@ docs/                      설계 문서, SDK 확인 결과
 ## 실행 방법
 
 ### APK로 바로 설치
-1. [Releases](https://github.com/ddo0S2/motor_rookie/releases)에서 `gyeot-v1.0.apk`를 내려받습니다.
-2. Pleos Connect 에뮬레이터를 켠 뒤 APK 파일을 에뮬레이터 화면에 끌어다 놓거나, `adb install gyeot-v1.0.apk`로 설치합니다.
+1. 저장소의 [`apk/모터루키_곁_release.apk`](apk/)를 내려받습니다. (release 빌드)
+2. Pleos Connect 에뮬레이터를 켠 뒤 APK 파일을 에뮬레이터 화면에 끌어다 놓거나, `adb install 모터루키_곁_release.apk`로 설치합니다.
+   - 같은 앱의 debug 버전이 이미 설치돼 있으면 서명이 달라 설치가 거부되므로, 먼저 삭제(`adb uninstall com.hyundai.motor_rookie`)합니다.
 
 ### 소스로 빌드
 1. 이 저장소를 Android Studio에서 엽니다.
