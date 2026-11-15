@@ -82,6 +82,8 @@ class InterventionManager(
 
     // 시뮬레이션에서는 시연이 빨리 진행되도록 시간을 줄인다
     private val sim get() = settings().simulation
+    /** 음성으로 대답할지 (가짜 공조 여부와 따로 설정) */
+    private val voice get() = settings().voiceAnswer && realInput.available
     private val downHoldMs get() = if (sim) 10_000L else 180_000L
     private val snoozeMs get() = if (sim) 60_000L else 20 * 60_000L
 
@@ -268,7 +270,7 @@ class InterventionManager(
     private suspend fun askRestByVoice(say: String) {
         while (quizJob?.isActive == true) delay(500)     // 퀴즈가 끝난 뒤에 말하기
         voiceOut.speak(say)
-        if (sim || !realInput.available) return            // 버튼으로 대답
+        if (!voice) return                                  // 버튼으로 대답
         voiceOut.beep()
         val heard = realInput.listen(6_000)
         if (heard is Heard.Text) when (RestRepository.yesNo(heard.text)) {
@@ -418,7 +420,7 @@ class InterventionManager(
 
     private suspend fun runQuiz() {
         val s = settings()
-        var input: VoiceInput = if (s.simulation || !realInput.available) manualInput else realInput
+        var input: VoiceInput = if (!voice) manualInput else realInput
         val asked = mutableListOf<Quiz>()
         val queue = ArrayDeque(QuizBank.pick(QUESTIONS_PER_SESSION, s.quizTypes))
         val results = mutableListOf<QuizResult>()
